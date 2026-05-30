@@ -1,6 +1,6 @@
-# SCENE: Self-Labeled Counterfactuals for Extrapolating to Negative Examples
+Never SCENE Before: A Comparison of Token Selection Approaches for Negative Extrapolation
 
-This is an official implementation for our paper, [SCENE: Self-Labeled Counterfactuals for Extrapolating to Negative Examples](https://arxiv.org/abs/2305.07984), EMNLP 2023.
+This is an extension of the paper: [SCENE: Self-Labeled Counterfactuals for Extrapolating to Negative Examples](https://arxiv.org/abs/2305.07984), EMNLP 2023.
 
 ```bibtex
 @inproceedings{fu-etal-2023-scene,
