@@ -2,6 +2,7 @@ import torch
 import numpy as np 
 import pandas as pd 
 
+
 def creating_mask(length, prob):
     """
     Creating mask.
@@ -19,6 +20,7 @@ def creating_mask(length, prob):
     else:
         mask[:,:-1] = torch.rand(1, length-1) <= prob
     return mask 
+
 
 def mask_questions_and_contexts(questions, contexts):
     masked_batch = []
@@ -43,6 +45,7 @@ def mask_questions_and_contexts(questions, contexts):
         
         masked_batch.append(question_masked_and_context)
     return masked_batch
+
 
 def mask_questions(questions):
     """
@@ -75,16 +78,16 @@ def mask_questions(questions):
         masked_batch.append(question_masked)
     return masked_batch
 
-# Perturb questions (tokenized by BERT) using BART given contexts
-def perturb(batch, tokenizer, tok_gen, generator, tok_para, clf, \
-        args, max_seq_length, pad_on_right, num_processes = 1):
+
+def perturb(batch, tokenizer, generator_tokenizer, generator, tok_para, clf,
+        args, max_seq_length, pad_on_right, num_processes = 1, model=None):
     """
     Main perturbation functionality. 
-
+    Perturb questions (tokenized by BERT) using BART given contexts
     Args:
         batch: A batch containing input_ids, attention_masks, and ground truth labels
         tokenizer: the roberta/bert tokenizer
-        tok_gen: the tokenizer for the genertor
+        generator_tokenizer: the tokenizer for the genertor
         generator: A generator that takes in masked questions, and fills perturbed questions
         tok_para: the tokenizer for the paraphrase classifier/detector
         clf: A paraphrase detector pretrained on QQP
@@ -108,7 +111,7 @@ def perturb(batch, tokenizer, tok_gen, generator, tok_para, clf, \
     #masked_batch = mask_questions_and_contexts(questions, contexts)
     masked_batch = mask_questions(questions)
     #logger.info(f"masked batch: {masked_batch}")
-    input_ids = tok_gen(masked_batch, 
+    input_ids = generator_tokenizer(masked_batch,
                 return_tensors="pt", 
                 padding=True,
                 max_length=max_seq_length,
@@ -204,6 +207,7 @@ def perturb(batch, tokenizer, tok_gen, generator, tok_para, clf, \
             })
         return batch, info, success_perturb, mask
 
+
 def produce_no_answer_batch(batch, tokenizer, args, \
         max_seq_length, pad_on_right, logger, logging=False):
     device = batch['input_ids'].device
@@ -248,7 +252,6 @@ def produce_no_answer_batch(batch, tokenizer, args, \
         return batch, torch.zeros_like(no_answer_ids).to(device)
 
 
-
 def batch_get_answer_tokens(start_pos, end_pos, input_ids, args):
     batch_answer_tokens = []
     for i in range(args.per_device_train_batch_size):
@@ -258,6 +261,7 @@ def batch_get_answer_tokens(start_pos, end_pos, input_ids, args):
             answer_tokens = input_ids[i][start_pos[i]:end_pos[i]+1].cpu().data.numpy()
         batch_answer_tokens.append(answer_tokens)
     return batch_answer_tokens
+
 
 def extract_topk_answer_tokens_from_logits(tokenizer, start_logits, end_logits, input_ids, topk=10, max_answer_length=30):
     """Get topk answer tokens from start_logits and end_logits
@@ -293,6 +297,7 @@ def extract_topk_answer_tokens_from_logits(tokenizer, start_logits, end_logits, 
     
     return predictions
 
+
 def batch_get_answer_tokens_topk(tokenizer, start_logits, end_logits, input_ids, args, topk=10, max_answer_length=30):
     """Get topk answer tokens from a batch of start_logits and end_logits
     """
@@ -300,7 +305,8 @@ def batch_get_answer_tokens_topk(tokenizer, start_logits, end_logits, input_ids,
     for i in range(args.per_device_train_batch_size):
         batch_answer_tokens.append(extract_topk_answer_tokens_from_logits(tokenizer, start_logits[i], end_logits[i], input_ids[i], topk, max_answer_length))
     return batch_answer_tokens
-    
+
+
 def batch_compute_mIoU(gt_answer_tokens, p_answer_tokens_topk, args, logger, topk=10, method='mean'):
     """Compute mean IoU for a batch of ground truth answer tokens and a batch of predicted answer tokens
     This will be used as a threshold for filtering out bad perturbations
@@ -323,11 +329,13 @@ def batch_compute_mIoU(gt_answer_tokens, p_answer_tokens_topk, args, logger, top
         batch_mIoU.append(list_iou)
     return batch_mIoU
 
+
 def get_topk(retrieved_psgs, index, num_rows, topk = 2):
     retrieved_psgs = np.array(eval(retrieved_psgs))
     retrieved_psgs = retrieved_psgs[retrieved_psgs != index]
     retrieved_psgs = retrieved_psgs[retrieved_psgs < num_rows]
     return retrieved_psgs[:topk]
+
 
 def flatten_column(df, column_name):
     repeat_lens = [len(item) if item is not np.nan else 1 for item in df[column_name]]
@@ -338,3 +346,115 @@ def flatten_column(df, column_name):
     expanded_df[column_name] = flat_column_values
     expanded_df[column_name].replace('nan', np.nan, inplace=True)
     return expanded_df
+
+
+def evaluate_and_filter_perturbations(
+    batch, model, tokenizer, generator_tokenizer, generator,
+    paraphrase_tokenizer, paraphrase_classifier, args, max_seq_length, pad_on_right, num_processes, logger
+):
+    """
+    Handles the scouting forward pass, perturbation generation, and
+    mIoU / Paraphrase filtering logic. Returns the valid perturbation_info list.
+    """
+    perturbation_info = []
+    with torch.no_grad():
+        outputs = model(**batch)
+        start_logits, end_logits = outputs.start_logits, outputs.end_logits
+        model_answer_tokens_topk = batch_get_answer_tokens_topk(tokenizer, start_logits, end_logits, batch['input_ids'],
+                                                                args)
+        model_answer_tokens = [pred[0]['tokens'] for pred in model_answer_tokens_topk]
+        m_answers = tokenizer.batch_decode(model_answer_tokens)  # model predictions on original examples
+
+        gt_answer_tokens = batch_get_answer_tokens(batch['start_positions'], batch['end_positions'], batch['input_ids'],
+                                                   args)
+        gt_answers = tokenizer.batch_decode(gt_answer_tokens)
+
+        for pt_idx in range(args.num_perturbation_examples_per_batch):
+            perturbed_batch, info, success_perturb, mask = \
+                perturb(batch, tokenizer, generator_tokenizer, generator, paraphrase_tokenizer, paraphrase_classifier, \
+                        args, max_seq_length, pad_on_right, num_processes)
+            if not args.use_paraphrase_detector:
+                mask = torch.ones_like(mask)
+            p_outputs = model(**perturbed_batch)  # Model prediction on perturbed examples
+            p_start_logits, p_end_logits = p_outputs.start_logits, p_outputs.end_logits
+            p_answer_tokens_topk = batch_get_answer_tokens_topk(tokenizer, p_start_logits, p_end_logits,
+                                                                perturbed_batch['input_ids'], args)
+            batch_mIoU = batch_compute_mIoU(model_answer_tokens, p_answer_tokens_topk, args, logger)
+            p_start_positions = torch.zeros(args.per_device_train_batch_size).type(torch.LongTensor).to(model.device)
+            p_end_positions = torch.zeros(args.per_device_train_batch_size).type(torch.LongTensor).to(model.device)
+            for i in range(args.per_device_train_batch_size):
+                example_info = info[i]
+                m_answer = m_answers[i]  # model prediction on original example
+                g_answer = gt_answers[i]  # groundtruth answer
+
+                pred_topk = p_answer_tokens_topk[i]
+                pred_tokens_topk = [pred_topk[j]['tokens'] for j in range(len(pred_topk))]
+                p_answers = tokenizer.batch_decode(pred_tokens_topk)  # topk predictions on perturbed example
+                IoU_list = batch_mIoU[i]  # IoU between topk predictions and model prediction on original example
+
+                answer_idx = 0
+                if mask[i] == 0:  # two sentences are paraphrase
+                    logger.info("Perturbation IS a paraphrase")
+                    p_answer = p_answers[answer_idx]
+
+                    if (m_answer == g_answer and  # model predicted correctly
+                            g_answer == p_answer):  # perturbation didn't change the label
+                        logger.info("Robust example")
+                        mask[i] = 1  # Robust example, will be kept for training
+
+                else:
+                    exists_good_p = False
+                    for j in range(len(pred_tokens_topk)):
+                        p_answer = p_answers[j]
+                        IoU = IoU_list[j]
+                        if IoU < args.IoU_threshold:
+                            logger.info("Exists perturbation")
+                            exists_good_p = True
+                            answer_idx = j
+                            break
+                    p_answer = p_answers[
+                        answer_idx]  # best perturbed answer (minimum IoU with model prediction on original example)
+                    if not exists_good_p: mask[i] = 0  # Non-paraphrase pertubation didn't change answer
+
+                p_start_positions[i] = pred_topk[answer_idx]['start_index']
+                p_end_positions[i] = pred_topk[answer_idx]['end_index']
+
+                success_perturb_i = success_perturb and (example_info['perturbation'] != example_info['question'])
+                if (m_answer == g_answer and  # model predicted correctly
+                        g_answer == p_answer and  # perturbation didn't change the label
+                        success_perturb_i):  # perturbed question is a valid perturbation
+                    logger.info("Answer didn't change w.r.t. successful perturbation")
+                    mask[i] = 1
+
+                if (tokenizer.cls_token in p_answer and  # perturbed prediction is the same as model prediction
+                        tokenizer.cls_token in m_answer and  # both perturbed and orginal predictions are NoAns
+                        tokenizer.cls_token not in g_answer):  # groundtruth has answer
+                    logger.info("NoAns prediction for both orginal and perturbed. Disgard.")
+                    mask[i] = 0
+
+                if not success_perturb_i:
+                    logger.info("Unsuccessful perturbation. Disgard.")
+                    mask[i] = 0
+
+                do_backprop = mask[
+                                  i] > 0.5  # convert mask to boolean. if True, this example will be used for training (via backprop)
+                logger.info(f"context:          {example_info['context']}")
+                logger.info(f"question:         {example_info['question']}")
+                logger.info(f"gt answer:        {g_answer}")
+                logger.info(f"model answer:     {m_answer}")
+                logger.info(f"masked_q:         {example_info['masked_q']}")
+                logger.info(f"perturbation:     {example_info['perturbation']}")
+                logger.info(f"all pert answers: {p_answers}")
+                logger.info(f"topk answer IoU:  {[round(iou, 2) for iou in batch_mIoU[i]]}")
+                logger.info(f"perturbed answer: {p_answer}")
+                logger.info(f"do backprop:      {do_backprop}")
+                logger.info(f"in warm up?:      {no_pert_and_perm}\n")
+            logger.info(f"mask: {mask}")
+            perturbation_info.append({
+                'perturbed_batch': perturbed_batch,
+                'p_start_positions': p_start_positions,
+                'p_end_positions': p_end_positions,
+                'mask': mask
+            })
+
+    return perturbation_info, mask
