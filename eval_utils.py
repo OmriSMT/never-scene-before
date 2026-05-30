@@ -1,3 +1,8 @@
+import torch
+import numpy as np
+from transformers import EvalPrediction
+
+from eval import postprocess_qa_predictions
 
 
 def create_and_fill_np_array(start_or_end_logits, dataset, max_len):
@@ -33,7 +38,7 @@ def create_and_fill_np_array(start_or_end_logits, dataset, max_len):
     return logits_concat
 
 
-def post_processing_function(examples, features, predictions, args, stage="eval"):
+def post_processing_function(examples, features, predictions, args, answer_column_name, stage="eval"):
     """
     Post-processing: we match the start logits and end logits to answers in the original context.
     """
@@ -62,7 +67,7 @@ def post_processing_function(examples, features, predictions, args, stage="eval"
     return EvalPrediction(predictions=formatted_predictions, label_ids=references)
 
 
-def run_evaluation(model, dataloader, dataset, examples, accelerator, metric, args, is_test=False):
+def run_evaluation(model, dataloader, dataset, examples, accelerator, metric, args, logger, answer_column_name, is_test=False):
     all_start_logits = []
     all_end_logits = []
 
@@ -84,14 +89,14 @@ def run_evaluation(model, dataloader, dataset, examples, accelerator, metric, ar
     max_len = max([x.shape[1] for x in all_start_logits])  # Get the max_length of the tensor
     # concatenate the numpy array
     start_logits_concat = create_and_fill_np_array(all_start_logits, dataset, max_len)
-    end_logits_concat = create_and_fill_np_array(all_end_logits, predict_dataset, max_len)
+    end_logits_concat = create_and_fill_np_array(all_end_logits, dataset, max_len)
 
     # delete the list of numpy arrays
     del all_start_logits
     del all_end_logits
 
     outputs_numpy = (start_logits_concat, end_logits_concat)
-    prediction = post_processing_function(examples, dataset, outputs_numpy, args)
+    prediction = post_processing_function(examples, dataset, outputs_numpy, args, answer_column_name)
     metrics = metric.compute(predictions=prediction.predictions, references=prediction.label_ids)
     if is_test:
         logger.info(f"Test metrics: {metrics}")

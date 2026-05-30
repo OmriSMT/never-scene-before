@@ -3,14 +3,6 @@ import json
 import os
 
 from transformers import SchedulerType
-
-from perturb import (
-    get_topk,
-    flatten_column,
-)
-
-import datasets
-import pandas as pd
 from transformers import MODEL_MAPPING
 
 MODEL_CONFIG_CLASSES = list(MODEL_MAPPING.keys())

@@ -44,32 +44,21 @@ from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import set_seed
 from huggingface_hub import Repository
-from transformers import (
-    EvalPrediction,
-    get_scheduler,
-)
 
 
 from args import parse_args, save_prefixed_metrics
 from models import load_models
-from data import (
+from dataloading import (
     load_raw_datasets,
     load_retrieval_dataset,
     preprocess_datasets,
     preprocess_retrieval_dataset,
     build_dataloaders,
 )
-from utils import postprocess_qa_predictions
-from perturb import (
-    perturb, 
-    produce_no_answer_batch, 
-    batch_get_answer_tokens,
-    batch_get_answer_tokens_topk,
-    batch_compute_mIoU,
-    evaluate_and_filter_perturbations
-)
-from optimization import create_optimizers_and_scheduler
-from eval_utils import create_and_fill_np_array, post_processing_function
+from perturb import evaluate_and_filter_perturbations
+from optimization import (create_optimizers_and_scheduler, calculate_and_backward_retrieval_loss,
+                          calculate_and_backward_permute_loss, calculate_and_backward_perturb_loss)
+from eval_utils import run_evaluation
 
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
@@ -139,6 +128,8 @@ def main():
     # Data loading
     # -------------------------------------------------------------------------
     raw_datasets = load_raw_datasets(args)
+    column_names = raw_datasets["train"].column_names
+    answer_column_name = "answers" if "answers" in column_names else column_names[2]
 
     retrieval_dataset = None
     if args.num_retrieval > 0:
@@ -185,7 +176,7 @@ def main():
     # -------------------------------------------------------------------------
     # Optimizer and learning rate scheduler
     # -------------------------------------------------------------------------
-    optimizer, optim_gen, lr_scheduler, max_train_steps = create_optimizers_and_scheduler(model, generator, args, train_dataloader)
+    optimizer, optim_gen, lr_scheduler = create_optimizers_and_scheduler(model, generator, args, train_dataloader)
     # Prepare everything with our `accelerator`.
     model, optimizer, train_dataloader, validation_dataloader, lr_scheduler = accelerator.prepare(
         model, optimizer, train_dataloader, validation_dataloader, lr_scheduler
@@ -199,7 +190,7 @@ def main():
             retrieval_dataloader
         )
 
-
+    overrode_max_train_steps = False
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     if overrode_max_train_steps:
@@ -251,14 +242,14 @@ def main():
     #         path = dirs[-1]  # Sorts folders by date modified, most recent checkpoint is the last
     #     # Extract `epoch_{i}` or `step_{i}`
     #     training_difference = os.path.splitext(path)[0]
-    #
-    #     if "epoch" in training_difference:
-    #         starting_epoch = int(training_difference.replace("epoch_", "")) + 1
-    #         resume_step = None
-    #     else:
-    #         resume_step = int(training_difference.replace("step_", ""))
-    #         starting_epoch = resume_step // len(train_dataloader)
-    #         resume_step -= starting_epoch * len(train_dataloader)
+
+        # if "epoch" in training_difference:
+        #     starting_epoch = int(training_difference.replace("epoch_", "")) + 1
+        #     resume_step = None
+        # else:
+        #     resume_step = int(training_difference.replace("step_", ""))
+        #     starting_epoch = resume_step // len(train_dataloader)
+        #     resume_step -= starting_epoch * len(train_dataloader)
     
     generator.eval()
     paraphrase_classifier.eval()
@@ -272,21 +263,21 @@ def main():
             retrieval_dataloader_iterable = iter(retrieval_dataloader)
 
         for step, batch in enumerate(train_dataloader):
-            # We need to skip steps until we reach the resumed step
-            if args.resume_from_checkpoint and epoch == starting_epoch:
-                if resume_step is not None and step < resume_step:
-                    completed_steps += 1
-                    continue
+            # # We need to skip steps until we reach the resumed step
+            # if args.resume_from_checkpoint and epoch == starting_epoch:
+            #     if resume_step is not None and step < resume_step:
+            #         completed_steps += 1
+            #         continue
             
             ###### compute model outputs for both original batch and perturb batch #####
             model.eval()
-            # first run
+            # first run we calculate only regular loss
             no_pert_and_perm = (step <= args.custom_warmup_steps and epoch == 0)
 
             perturbation_info, mask = evaluate_and_filter_perturbations(
                 batch, model, tokenizer, generator_tokenizer, generator,
                 paraphrase_tokenizer, paraphrase_classifier, args, max_seq_length, pad_on_right,
-                num_processes, logger)
+                accelerator.num_processes, logger)
             
             model.train()
             with accelerator.accumulate(model):
@@ -302,14 +293,14 @@ def main():
 
                 if not no_pert_and_perm:
                     # Perturbed cases
-                    calculate_and_backward_perturb_loss(model, perturbation_info, accelerator, args, mask)
+                    calculate_and_backward_perturb_loss(model, perturbation_info, accelerator, args, mask, logger)
                         
                     # adding permutation
                     calculate_and_backward_permute_loss(model, batch, tokenizer, accelerator, args, max_seq_length,
                                                         pad_on_right, logger)
 
                     # adding retrieval-based no answerable question
-                    calculate_and_backward_retrieval_loss(model, retrieval_dataloader_iterable, accelerator, args)
+                    calculate_and_backward_retrieval_loss(model, retrieval_dataloader, retrieval_dataloader_iterable, accelerator, args, logger)
 
                 # accumulate gradient and update the parameters
                 optimizer.step()
@@ -355,20 +346,20 @@ def main():
     metric = evaluate.load("squad_v2" if args.version_2_with_negative else "squad")
 
     logger.info("***** Running Validation Evaluation *****")
-    logger.info(f"  Num examples = {len(eval_dataset)}")
+    logger.info(f"  Num examples = {len(validation_dataset)}")
     logger.info(f"  Batch size = {args.per_device_eval_batch_size}")
 
-    val_metric = run_evaluation(model, validation_dataloader, validation_dataset, validation_examples, accelerator, metric, args, is_test=False)
+    val_metric = run_evaluation(model, validation_dataloader, validation_dataset, validation_examples, accelerator, metric, args, logger, answer_column_name, is_test=False)
 
     # -------------------------------------------------------------------------
     # Test Evaluation
     # -------------------------------------------------------------------------
     if args.do_predict:
         logger.info("***** Running Test Evaluation *****")
-        logger.info(f"  Num examples = {len(predict_dataset)}")
+        logger.info(f"  Num examples = {len(test_dataset)}")
         logger.info(f"  Batch size = {args.per_device_eval_batch_size}")
 
-        test_metric = run_evaluation(model, test_dataloader, test_dataset, test_examples, accelerator, metric, args, is_test=True)
+        test_metric = run_evaluation(model, test_dataloader, test_dataset, test_examples, accelerator, metric, args, logger, answer_column_name, is_test=True)
 
     if args.with_tracking:
         log = {
@@ -397,8 +388,8 @@ def main():
             # if args.push_to_hub:
             #     repo.push_to_hub(commit_message="End of training", auto_lfs_prune=True)
 
-            logger.info(json.dumps(eval_metric, indent=4))
-            save_prefixed_metrics(eval_metric, args.output_dir)
+            logger.info(json.dumps(val_metric, indent=4))
+            save_prefixed_metrics(val_metric, args.output_dir)
 
 
 if __name__ == "__main__":

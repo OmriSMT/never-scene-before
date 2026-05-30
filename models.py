@@ -31,6 +31,7 @@ def load_models(args):
     # In distributed training, the .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
 
+    print(f"Loading QA model {args.model_name_or_path}...")
     if args.config_name:
         config = AutoConfig.from_pretrained(args.config_name)
     elif args.model_name_or_path:
@@ -58,10 +59,12 @@ def load_models(args):
     else:
         logger.info("Training new model from scratch")
         model = AutoModelForQuestionAnswering.from_config(config)
-    
+
+    print("Loading Negative generator...")
     generator_tokenizer = BartTokenizer.from_pretrained("facebook/bart-large")
     generator = BartForConditionalGeneration.from_pretrained("facebook/bart-large", forced_bos_token_id=0)
 
+    print("Loading Paraphrase classifier...")
     paraphrase_tokenizer = AutoTokenizer.from_pretrained("JeremiahZ/roberta-base-qqp")
     paraphrase_classifier = AutoModelForSequenceClassification.from_pretrained("JeremiahZ/roberta-base-qqp")
 

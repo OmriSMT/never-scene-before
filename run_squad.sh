@@ -1,7 +1,7 @@
 #!/bin/bash
 
 source ~/.bashrc
-conda activate scene
+conda activate never_scene
 
 NUM_PERT=1
 NUM_PERM=1
@@ -11,7 +11,7 @@ WEIGHT_PERM=1.0
 WEIGHT_RETV=1.0
 WEIGHT_DECAY=0.01
 EPOCHS=3
-DATSET=squad
+DATASET=squad
 MODEL_NAME=csarron/roberta-base-squad-v1
 
 
@@ -22,7 +22,7 @@ accelerate launch train.py \
   --learning_rate 2e-5 \
   --custom_warmup_steps 0 \
   --weight_decay 0.01 \
-  --dataset_name ${DATSET} \
+  --dataset_name ${DATASET} \
   --pad_to_max_length \
   --max_seq_length 384 \
   --doc_stride 128 \

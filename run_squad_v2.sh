@@ -1,7 +1,7 @@
 #!/bin/bash
 
 source ~/.bashrc
-conda activate scene
+conda activate never_scene
 
 NUM_PERT=1
 NUM_PERM=0

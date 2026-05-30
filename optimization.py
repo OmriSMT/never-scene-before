@@ -1,4 +1,8 @@
 import math
+import torch
+from transformers import get_scheduler
+
+from perturb import produce_no_answer_batch
 
 
 def create_optimizers_and_scheduler(model, generator, args, train_dataloader):
@@ -43,10 +47,10 @@ def create_optimizers_and_scheduler(model, generator, args, train_dataloader):
         num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
     )
 
-    return optimizer, optim_gen, lr_scheduler, max_train_steps
+    return optimizer, optim_gen, lr_scheduler
 
 
-def calculate_and_backward_perturb_loss(model, perturbation_info, accelerator, args, mask):
+def calculate_and_backward_perturb_loss(model, perturbation_info, accelerator, args, mask, logger):
     for pt_idx in range(args.num_perturbation_examples_per_batch):
         perturbed_batch = perturbation_info[pt_idx]['perturbed_batch']
         p_start_positions = perturbation_info[pt_idx]['p_start_positions']
@@ -99,7 +103,7 @@ def calculate_and_backward_permute_loss(model, batch, tokenizer, accelerator, ar
         logger.info(f"perm [idx: {pm_idx}] loss: {loss.detach().float()}")
 
 
-def calculate_and_backward_retrieval_loss(model, retrieval_dataloader_iterable, accelerator, args):
+def calculate_and_backward_retrieval_loss(model, retrieval_dataloader, retrieval_dataloader_iterable, accelerator, args, logger):
     for rt_idx in range(args.num_retrieval):
         try:
             batch_retv = next(retrieval_dataloader_iterable)

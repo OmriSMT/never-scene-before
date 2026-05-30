@@ -1,74 +1,66 @@
 import torch 
 import numpy as np 
-import pandas as pd 
+import pandas as pd
+
+from mask_strategies import RandomMaskStrategy
 
 
-def creating_mask(length, prob):
+# def mask_questions_and_contexts(questions, contexts):
+#     masked_batch = []
+#     mask_prob = np.random.choice([0.1, 0.3, 0.5])
+#     for q_idx, question in enumerate(questions):
+#         question_splits = question.split("?")[0].split(" ")
+#         length = len(question_splits)
+#         mask = creating_mask(length, mask_prob)
+#
+#         question_splits_masked = np.array([question_splits], dtype=object)
+#         try:
+#             question_splits_masked[mask] = "<mask>"
+#         except:
+#             print(question)
+#             print(question_splits)
+#             print(mask)
+#             print(question_splits_masked)
+#
+#         question_masked = ' '.join(question_splits_masked[0])
+#         question_masked += '?' #question mark
+#         question_masked_and_context = question_masked + " " + contexts[q_idx]
+#
+#         masked_batch.append(question_masked_and_context)
+#     return masked_batch
+
+
+def mask_questions(questions, strategy, contexts=None, start_positions=None, end_positions=None, device=None):
     """
-    Creating mask.
-
+    Mask a batch of questions with a given masking strategy.
     Args:
-        length: length of array to mask 
-        prob:   of what proportion the array is masked out
-    """
-    k = int((length-1)*prob)
-    mask = (torch.ones(size=(1, length)) == 0)
-    if k > 0:
-        rand_mat = torch.rand(1, length-1)
-        k_th_quant = torch.topk(rand_mat, k, largest = False)[0][:,-1:]
-        mask[:,:-1] = rand_mat <= k_th_quant
-    else:
-        mask[:,:-1] = torch.rand(1, length-1) <= prob
-    return mask 
-
-
-def mask_questions_and_contexts(questions, contexts):
-    masked_batch = []
-    mask_prob = np.random.choice([0.1, 0.3, 0.5])
-    for q_idx, question in enumerate(questions):
-        question_splits = question.split("?")[0].split(" ")
-        length = len(question_splits)
-        mask = creating_mask(length, mask_prob)
-        
-        question_splits_masked = np.array([question_splits], dtype=object)
-        try:
-            question_splits_masked[mask] = "<mask>"
-        except:
-            print(question)
-            print(question_splits)
-            print(mask)
-            print(question_splits_masked)
-                
-        question_masked = ' '.join(question_splits_masked[0])
-        question_masked += '?' #question mark
-        question_masked_and_context = question_masked + " " + contexts[q_idx]
-        
-        masked_batch.append(question_masked_and_context)
-    return masked_batch
-
-
-def mask_questions(questions):
-    """
-    Mask a batch of questions
-
-    Args:
-        questions: A batch of string questions 
+        questions:       A batch of string questions
+        strategy:        a masking strategy instance (RandomMaskStrategy, etc.)
+        contexts:        list of context strings, required by LossMaskStrategy
+        start_positions: list of int start token positions, required by LossMaskStrategy
+        end_positions:   list of int end token positions,   required by LossMaskStrategy
+        device:          torch device, passed through to LossMaskStrategy
     
     Output:
         masked_batch: Masked version of input string questions
     """
     masked_batch = []
-    mask_prob = np.random.beta(2.0, 5.0)
     for q_idx, question in enumerate(questions):
-        question_splits = question.split("?")[0].split(" ")
-        length = len(question_splits)
-        mask = creating_mask(length, mask_prob)
-        question_splits_masked = np.array([question_splits], dtype=object)
+        words = question.split("?")[0].split(" ")
+
+        extra = {}
+        if contexts is not None: extra["context"] = contexts[q_idx]
+        if start_positions is not None: extra["start_position"] = start_positions[q_idx]
+        if end_positions is not None: extra["end_position"] = end_positions[q_idx]
+        if device is not None: extra["device"] = device
+
+        mask = strategy(words, **extra)
+        question_splits_masked = np.array([words], dtype=object)
         try:
             question_splits_masked[mask] = "<mask>"
         except:
             print(question)
-            print(question_splits)
+            print(words)
             print(mask)
             print(question_splits_masked)
                 
@@ -80,7 +72,7 @@ def mask_questions(questions):
 
 
 def perturb(batch, tokenizer, generator_tokenizer, generator, tok_para, clf,
-        args, max_seq_length, pad_on_right, num_processes = 1, model=None):
+        args, max_seq_length, pad_on_right, num_processes = 1, model=None, mask_strategy=None):
     """
     Main perturbation functionality. 
     Perturb questions (tokenized by BERT) using BART given contexts
@@ -95,6 +87,7 @@ def perturb(batch, tokenizer, generator_tokenizer, generator, tok_para, clf,
         max_seq_length: maximum sequence length for tokenizers
         pad_on_right: if the padding in tokenizer is to the right
         num_processes: for determining if the training is using multiple GPUs
+        mask_strategy:  a masking strategy instance; defaults to RandomMaskStrategy()
     
     Returns:
         perturbed_batch: A batch of perturbed questions
@@ -102,6 +95,13 @@ def perturb(batch, tokenizer, generator_tokenizer, generator, tok_para, clf,
         success_perturb: A boolean indicating if the perturbation is successful
         mask: A boolean indicating if the perturbation is a paraphrase
     """
+    # LossMaskStrategy needs start/end positions; others ignore them.
+    start_positions = batch["start_positions"].cpu().tolist()
+    end_positions   = batch["end_positions"].cpu().tolist()
+
+    if mask_strategy is None:
+        mask_strategy = RandomMaskStrategy()
+
     device = generator.device 
     original = tokenizer.batch_decode(batch['input_ids'])
     cls_token = tokenizer.cls_token
@@ -109,8 +109,14 @@ def perturb(batch, tokenizer, generator_tokenizer, generator, tok_para, clf,
     questions = [list(filter(None, x.split(sep_token)))[0].split(cls_token)[1].lstrip().rstrip() for x in original]
     contexts  = [list(filter(None, x.split(sep_token)))[1].split(sep_token)[0].lstrip().rstrip() for x in original]
     #masked_batch = mask_questions_and_contexts(questions, contexts)
-    masked_batch = mask_questions(questions)
-    #logger.info(f"masked batch: {masked_batch}")
+    masked_batch = mask_questions(
+        questions,
+        strategy=mask_strategy,
+        contexts=contexts,
+        start_positions=start_positions,
+        end_positions=end_positions,
+        device=device,
+    )    #logger.info(f"masked batch: {masked_batch}")
     input_ids = generator_tokenizer(masked_batch,
                 return_tensors="pt", 
                 padding=True,
@@ -126,7 +132,7 @@ def perturb(batch, tokenizer, generator_tokenizer, generator, tok_para, clf,
         generating_func = generator.generate
     
     
-    perturbation = tok_gen.batch_decode(generating_func(
+    perturbation = generator_tokenizer.batch_decode(generating_func(
         input_ids.to(device), 
         num_return_sequences=1,
         no_repeat_ngram_size=3, 
@@ -208,7 +214,7 @@ def perturb(batch, tokenizer, generator_tokenizer, generator, tok_para, clf,
         return batch, info, success_perturb, mask
 
 
-def produce_no_answer_batch(batch, tokenizer, args, \
+def produce_no_answer_batch(batch, tokenizer, args,
         max_seq_length, pad_on_right, logger, logging=False):
     device = batch['input_ids'].device
     ids = torch.range(0, args.per_device_train_batch_size-1)
@@ -429,26 +435,25 @@ def evaluate_and_filter_perturbations(
                 if (tokenizer.cls_token in p_answer and  # perturbed prediction is the same as model prediction
                         tokenizer.cls_token in m_answer and  # both perturbed and orginal predictions are NoAns
                         tokenizer.cls_token not in g_answer):  # groundtruth has answer
-                    logger.info("NoAns prediction for both orginal and perturbed. Disgard.")
+                    logger.info("NoAns prediction for both orginal and perturbed. Disregard.")
                     mask[i] = 0
 
                 if not success_perturb_i:
-                    logger.info("Unsuccessful perturbation. Disgard.")
+                    logger.info("Unsuccessful perturbation. Disregard.")
                     mask[i] = 0
 
                 do_backprop = mask[
                                   i] > 0.5  # convert mask to boolean. if True, this example will be used for training (via backprop)
-                logger.info(f"context:          {example_info['context']}")
-                logger.info(f"question:         {example_info['question']}")
-                logger.info(f"gt answer:        {g_answer}")
-                logger.info(f"model answer:     {m_answer}")
-                logger.info(f"masked_q:         {example_info['masked_q']}")
-                logger.info(f"perturbation:     {example_info['perturbation']}")
-                logger.info(f"all pert answers: {p_answers}")
-                logger.info(f"topk answer IoU:  {[round(iou, 2) for iou in batch_mIoU[i]]}")
-                logger.info(f"perturbed answer: {p_answer}")
-                logger.info(f"do backprop:      {do_backprop}")
-                logger.info(f"in warm up?:      {no_pert_and_perm}\n")
+                # logger.info(f"context:          {example_info['context']}")
+                # logger.info(f"question:         {example_info['question']}")
+                # logger.info(f"gt answer:        {g_answer}")
+                # logger.info(f"model answer:     {m_answer}")
+                # logger.info(f"masked_q:         {example_info['masked_q']}")
+                # logger.info(f"perturbation:     {example_info['perturbation']}")
+                # logger.info(f"all pert answers: {p_answers}")
+                # logger.info(f"topk answer IoU:  {[round(iou, 2) for iou in batch_mIoU[i]]}")
+                # logger.info(f"perturbed answer: {p_answer}")
+                # logger.info(f"do backprop:      {do_backprop}")
             logger.info(f"mask: {mask}")
             perturbation_info.append({
                 'perturbed_batch': perturbed_batch,
