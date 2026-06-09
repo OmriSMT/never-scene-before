@@ -293,14 +293,16 @@ def main():
 
                 if not no_pert_and_perm:
                     # Perturbed cases
-                    calculate_and_backward_perturb_loss(model, perturbation_info, accelerator, args, mask, logger)
+                    if args.num_perturbation_examples_per_batch > 0 and args.weight_perturb > 0:
+                        calculate_and_backward_perturb_loss(model, perturbation_info, accelerator, args, mask, logger)
                         
                     # adding permutation
-                    calculate_and_backward_permute_loss(model, batch, tokenizer, accelerator, args, max_seq_length,
-                                                        pad_on_right, logger)
+                    if args.num_permutation_examples_per_batch > 0 and args.weight_permute > 0:
+                        calculate_and_backward_permute_loss(model, batch, tokenizer, accelerator, args, max_seq_length,pad_on_right, logger)
 
                     # adding retrieval-based no answerable question
-                    calculate_and_backward_retrieval_loss(model, retrieval_dataloader, retrieval_dataloader_iterable, accelerator, args, logger)
+                    if args.num_retrieval > 0 and args.weight_retrieval > 0:
+                        calculate_and_backward_retrieval_loss(model, retrieval_dataloader, retrieval_dataloader_iterable, accelerator, args, logger)
 
                 # accumulate gradient and update the parameters
                 optimizer.step()
