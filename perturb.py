@@ -2,7 +2,7 @@ import torch
 import numpy as np 
 import pandas as pd
 
-from mask_strategies import RandomMaskStrategy
+from mask_strategies import RandomMaskStrategy, POSMaskStrategy
 
 
 # def mask_questions_and_contexts(questions, contexts):
@@ -100,7 +100,12 @@ def perturb(batch, tokenizer, generator_tokenizer, generator, tok_para, clf,
     end_positions   = batch["end_positions"].cpu().tolist()
 
     if mask_strategy is None:
-        mask_strategy = RandomMaskStrategy()
+        if args.mask_strategy == "random":
+            mask_strategy = RandomMaskStrategy()
+        elif args.mask_strategy == "pos":
+            mask_strategy = POSMaskStrategy(target_pos=args.pos_tags)
+        else:
+            raise ValueError(f"Unknown mask strategy: {args.mask_strategy}")
 
     device = generator.device 
     original = tokenizer.batch_decode(batch['input_ids'])

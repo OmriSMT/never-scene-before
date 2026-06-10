@@ -40,3 +40,72 @@ class RandomMaskStrategy:
         else:
             mask[:, :-1] = torch.rand(1, length - 1) <= mask_prob
         return mask
+
+
+class POSMaskStrategy:
+    """
+    POS-based masking strategy.
+
+    Masks only tokens whose POS tag is in target_pos.
+    For example: NOUN, PROPN, VERB, ADJ, NUM.
+    """
+
+    _nlp = None
+
+    def __init__(
+        self,
+        target_pos=("NOUN", "PROPN", "VERB", "ADJ", "NUM"),
+        alpha=2.0,
+        beta=5.0,
+        min_masks=1,
+    ):
+        self.target_pos = set(target_pos)
+        self.alpha = alpha
+        self.beta = beta
+        self.min_masks = min_masks
+
+        if POSMaskStrategy._nlp is None:
+            import spacy
+            POSMaskStrategy._nlp = spacy.load(
+                "en_core_web_sm",
+                disable=["ner", "parser"],
+            )
+
+    def __call__(self, words, **kwargs):
+        device = kwargs.get("device", None)
+
+        length = len(words)
+        mask = torch.zeros(size=(1, length), dtype=torch.bool)
+
+        if device is not None:
+            mask = mask.to(device)
+
+        if length == 0:
+            return mask
+
+        doc = POSMaskStrategy._nlp(" ".join(words))
+
+        candidates = []
+        for i, token in enumerate(doc):
+            if i >= length:
+                break
+            if token.pos_ in self.target_pos:
+                candidates.append(i)
+
+        if len(candidates) == 0:
+            return mask
+
+        mask_prob = np.random.beta(self.alpha, self.beta)
+        k = int(len(candidates) * mask_prob)
+
+        if self.min_masks is not None:
+            k = max(self.min_masks, k)
+
+        k = min(k, len(candidates))
+
+        selected = np.random.choice(candidates, size=k, replace=False)
+
+        for idx in selected:
+            mask[0, idx] = True
+
+        return mask

@@ -326,7 +326,22 @@ def parse_args():
         "--retrieval_context_title_path",
         type=str, default="./data/train_documents.csv"
     )
-
+    
+    parser.add_argument(
+        "--mask_strategy",
+        type=str,
+        default="random",
+        choices=["random", "pos"],
+        help="Masking strategy to use for perturbation generation.",
+    )
+    
+    parser.add_argument(
+        "--pos_tags",
+        nargs="+",
+        default=["NOUN", "PROPN", "VERB", "ADJ", "NUM"],
+        help="POS tags to use when mask_strategy=pos.",
+    )
+    
     parser.add_argument("--remove_no_answer", action="store_true", help="force remove datapoint that has no answer")
     
     args = parser.parse_args()

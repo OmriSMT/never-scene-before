@@ -15,5 +15,6 @@ echo "Node: $SLURM_JOB_NODELIST"
 echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
 nvidia-smi
 
-bash run_squad_debug.sh
+#bash run_squad_debug.sh
+MASK_STRATEGY=pos bash run_squad_debug.sh
 
