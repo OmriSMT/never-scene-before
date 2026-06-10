@@ -46,7 +46,7 @@ class RandomMaskStrategy(MaskStrategy):
         length = len(words)
 
         # of what proportion the array is masked out
-        k = int(length * self._batch_prob)  # last word is "?"
+        k = int(length * self._batch_prob)
 
         mask = (torch.ones(size=(1, length)) == 0)
         if k > 0:
@@ -90,20 +90,36 @@ class LossMaskStrategy(MaskStrategy):
         self.max_seq_length = max_seq_length
         super().__init__(*args, **kwargs)
 
-
     def __call__(self, words, context=None, start_position=None,
-                 end_position=None, device=None, **kwargs):
+            end_position=None, device=None, **kwargs):
         if context is None:
             raise ValueError("LossMaskStrategy requires `context` kwarg")
+        if start_position is None or end_position is None:
+            raise ValueError("LossMaskStrategy requires `start_position` and `end_position` kwargs")
 
+        # strip empty strings from multi-space splits to avoid malformed candidates
+        words = [w for w in words if w]
         length = len(words)
-
         # of what proportion the array is masked out
-        k = int(length  * self._batch_prob)
+        k = int(length * self._batch_prob)
 
-
-        device = device or next(self.model.parameters()).device
         loss_deltas = []
+
+        # Encode the original question once to derive character-level answer
+        # span — this is the same for every leave-one-out variant.
+        original_q = " ".join(words) + "?"
+        original_enc = self.tokenizer(
+            original_q,
+            context,
+            truncation="only_second",
+            max_length=self.max_seq_length,
+            return_tensors="pt",
+            padding="max_length",
+            return_offsets_mapping=True,
+        )
+        offsets = original_enc["offset_mapping"][0]
+        start_char = offsets[start_position][0].item() if start_position < len(offsets) else 0
+        end_char = offsets[end_position][1].item() if end_position < len(offsets) else 0
 
         with torch.no_grad():
             for i in range(length):
@@ -121,10 +137,26 @@ class LossMaskStrategy(MaskStrategy):
                     return_offsets_mapping=True,
                 ).to(device)
 
-                enc["start_positions"] = torch.tensor([start_position], device=device)
-                enc["end_positions"] = torch.tensor([end_position], device=device)
+                offsets_new = enc["offset_mapping"][0]
+                seq_ids_new = enc.sequence_ids(0)
 
-                loss = self.model(**enc).loss.item()
+                # re-derive token start/end from character offsets in the new encoding
+                new_start, new_end = 0, 0  # default to CLS (no-answer) if not found
+                for j, (off, sid) in enumerate(zip(offsets_new, seq_ids_new)):
+                    if sid != 1:
+                        continue
+                    if off[0].item() <= start_char < off[1].item():
+                        new_start = j
+                    if off[0].item() < end_char <= off[1].item():
+                        new_end = j
+
+                enc.pop("offset_mapping")  # model doesn't accept this field
+
+                loss = self.model(
+                    **enc,
+                    start_positions=torch.tensor([new_start], device=device),
+                    end_positions=torch.tensor([new_end], device=device),
+                ).loss.item()
                 loss_deltas.append((i, loss))
 
         # pick the k positions with the highest loss
