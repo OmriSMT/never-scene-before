@@ -10,6 +10,7 @@ questions = [
 
 for q in questions:
     words = q.split("?")[0].split(" ")
+    strategy.sample_mask_proportion()
     mask = strategy(words)
 
     masked_words = [
