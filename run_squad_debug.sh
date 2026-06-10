@@ -5,6 +5,7 @@ NUM_PERM=0
 NUM_RETV=0
 MASK_STRATEGY=${MASK_STRATEGY:-random}
 POS_TAGS=${POS_TAGS:-"NOUN PROPN VERB ADJ NUM"}
+
 WEIGHT_PERT=1.0
 WEIGHT_PERM=0.0
 WEIGHT_RETV=0.0
@@ -39,4 +40,3 @@ accelerate launch train.py \
   --remove_no_answer \
   --use_paraphrase_detector \
   --output_dir ${OUTPUT_DIR}
-  
