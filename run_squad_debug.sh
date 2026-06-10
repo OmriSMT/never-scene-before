@@ -1,8 +1,5 @@
 #!/bin/bash
 
-source ~/.bashrc
-conda activate never_scene
-
 NUM_PERT=1
 NUM_PERM=0
 NUM_RETV=0
