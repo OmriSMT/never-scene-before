@@ -335,14 +335,6 @@ def parse_args():
     )
     
     parser.add_argument(
-        "--mask_strategy",
-        type=str,
-        default="random",
-        choices=["random", "pos"],
-        help="Masking strategy to use for perturbation generation.",
-    )
-    
-    parser.add_argument(
         "--pos_tags",
         nargs="+",
         default=["NOUN", "PROPN", "VERB", "ADJ", "NUM"],
