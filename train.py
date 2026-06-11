@@ -265,9 +265,10 @@ def main():
         raise Exception(f"Mask strategy {args.mask_strategy} is not supported.")
     elif args.mask_strategy == "loss":
         mask_strategy = strategy(model, tokenizer, max_seq_length)
+        logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
     else:
         mask_strategy = strategy()
-        logger.info(f"Using {strategy} mask strategy for perturbation.")
+        logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
     
     generator.eval()
     paraphrase_classifier.eval()

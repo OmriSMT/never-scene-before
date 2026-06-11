@@ -8,11 +8,11 @@ WEIGHT_PERT=1.0
 WEIGHT_PERM=0.0
 WEIGHT_RETV=0.0
 
-EPOCHS=1
+EPOCHS=3
 DATASET=squad
 MODEL_NAME=csarron/roberta-base-squad-v1
 
-OUTPUT_DIR=./checkpoints/${DATASET}/loss_epoch1${NUM_PERT}_perm_${NUM_PERM}_retr_${NUM_RETV}
+OUTPUT_DIR=./checkpoints/${DATASET}/loss_epoch3${NUM_PERT}_perm_${NUM_PERM}_retr_${NUM_RETV}
 
 mkdir -p ${OUTPUT_DIR}
 
