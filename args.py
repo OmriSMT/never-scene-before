@@ -74,6 +74,13 @@ def parse_args():
         help="If passed, pad all samples to `max_seq_length`. Otherwise, dynamic padding is used.",
     )
     parser.add_argument(
+        '--mask_strategy',
+        type=str,
+        choices=['random', 'loss', 'pos', 'ner'],
+        default='random',
+        help=f"Select environment mode (choices: {', '.join(['random', 'loss', 'pos', 'ner'])})"
+    )
+    parser.add_argument(
         "--model_name_or_path",
         type=str,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
