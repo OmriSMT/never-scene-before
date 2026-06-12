@@ -58,7 +58,7 @@ from perturb import evaluate_and_filter_perturbations
 from optimization import (create_optimizers_and_scheduler, calculate_and_backward_retrieval_loss,
                           calculate_and_backward_permute_loss, calculate_and_backward_perturb_loss)
 from eval_utils import run_evaluation
-from mask_strategies import RandomMaskStrategy, LossMaskStrategy # TODO: import more here when we have them implemented
+from mask_strategies import RandomMaskStrategy, LossMaskStrategy, POSMaskStrategy # TODO: import more here when we have them implemented
 
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
@@ -71,6 +71,7 @@ logger = get_logger(__name__)
 MASK_STRATEGIES = {
     "random": RandomMaskStrategy,
     "loss": LossMaskStrategy,
+    "pos": POSMaskStrategy,
 }
 
 
