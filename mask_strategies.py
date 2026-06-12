@@ -169,7 +169,7 @@ class LossMaskStrategy(MaskStrategy):
         return mask
 
 
-class POSMaskStrategy:
+class POSMaskStrategy(MaskStrategy):
     """
     POS-based masking strategy.
 
@@ -182,13 +182,13 @@ class POSMaskStrategy:
     def __init__(
         self,
         target_pos=("NOUN", "PROPN", "VERB", "ADJ", "NUM"),
-        alpha=2.0,
-        beta=5.0,
         min_masks=1,
+        *args,
+        **kwargs,
     ):
+        super().__init__(*args, **kwargs)
+
         self.target_pos = set(target_pos)
-        self.alpha = alpha
-        self.beta = beta
         self.min_masks = min_masks
 
         if POSMaskStrategy._nlp is None:
@@ -222,8 +222,10 @@ class POSMaskStrategy:
         if len(candidates) == 0:
             return mask
 
-        mask_prob = np.random.beta(self.alpha, self.beta)
-        k = int(len(candidates) * mask_prob)
+        if self._batch_prob is None:
+            self.sample_mask_proportion()
+
+        k = int(len(candidates) * self._batch_prob)
 
         if self.min_masks is not None:
             k = max(self.min_masks, k)

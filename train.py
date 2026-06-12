@@ -266,6 +266,8 @@ def main():
         raise Exception(f"Mask strategy {args.mask_strategy} is not supported.")
     elif args.mask_strategy == "loss":
         mask_strategy = strategy(model, tokenizer, max_seq_length)
+    elif args.mask_strategy == "pos":
+        mask_strategy = strategy(target_pos=args.pos_tags)
     else:
         mask_strategy = strategy()
         logger.info(f"Using {strategy} mask strategy for perturbation.")
