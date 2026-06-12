@@ -31,7 +31,10 @@ def load_models(args):
     # In distributed training, the .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
 
-    print(f"Loading QA model {args.model_name_or_path}...")
+    is_boolq = getattr(args, "dataset_name", "").lower() == "boolq"
+    
+    print(f"Loading {'BoolQ (SeqCls)' if is_boolq else 'QA'} model {args.model_name_or_path}...")
+
     if args.config_name:
         config = AutoConfig.from_pretrained(args.config_name)
     elif args.model_name_or_path:
@@ -50,15 +53,32 @@ def load_models(args):
             "You can do it from another script, save it, and load it from here, using --tokenizer_name."
         )
 
-    if args.model_name_or_path:
-        model = AutoModelForQuestionAnswering.from_pretrained(
-            args.model_name_or_path,
-            from_tf=bool(".ckpt" in args.model_name_or_path),
-            config=config,
-        )
+    if is_boolq:
+        # binary classification head
+        if args.model_name_or_path:
+            model = AutoModelForSequenceClassification.from_pretrained(
+                args.model_name_or_path,
+                from_tf=bool(".ckpt" in args.model_name_or_path),
+                config=config,
+                num_labels=2,
+                ignore_mismatched_sizes=True,
+            )
+        else:
+            logger.info("Training new BoolQ model from scratch")
+            config.num_labels = 2
+            model = AutoModelForSequenceClassification.from_config(config)
+        
     else:
-        logger.info("Training new model from scratch")
-        model = AutoModelForQuestionAnswering.from_config(config)
+        # SQuAD / extractive QA: span-extraction head
+        if args.model_name_or_path:
+            model = AutoModelForQuestionAnswering.from_pretrained(
+                args.model_name_or_path,
+                from_tf=bool(".ckpt" in args.model_name_or_path),
+                config=config,
+            )
+        else:
+            logger.info("Training new model from scratch")
+            model = AutoModelForQuestionAnswering.from_config(config)
 
     print("Loading Negative generator...")
     generator_tokenizer = BartTokenizer.from_pretrained("facebook/bart-large")

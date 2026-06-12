@@ -1,9 +1,4 @@
 data/
 checkpoints/
 __pycache__/
-logs/
-*.out
-*.err
-*.pyc
-
-
+.ipynb_checkpoints/

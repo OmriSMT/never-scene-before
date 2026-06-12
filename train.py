@@ -129,7 +129,14 @@ def main():
     # -------------------------------------------------------------------------
     raw_datasets = load_raw_datasets(args)
     column_names = raw_datasets["train"].column_names
-    answer_column_name = "answers" if "answers" in column_names else column_names[2]
+    # adjusting for BoolQ which uses "answer" (bool) and SQuAD uses "answers" (dict with spans)
+    
+    if "answers" in column_names:
+        answer_column_name = "answers"
+    elif "answer" in column_names:
+        answer_column_name = "answer"
+    else:
+        answer_column_name = column_names[2]
 
     retrieval_dataset = None
     if args.num_retrieval > 0:
@@ -274,10 +281,16 @@ def main():
             # first run we calculate only regular loss
             no_pert_and_perm = (step <= args.custom_warmup_steps and epoch == 0)
 
-            perturbation_info, mask = evaluate_and_filter_perturbations(
-                batch, model, tokenizer, generator_tokenizer, generator,
-                paraphrase_tokenizer, paraphrase_classifier, args, max_seq_length, pad_on_right,
-                accelerator.num_processes, logger)
+            if getattr(args, "dataset_name", "").lower() == "boolq":
+                perturbation_info, mask = evaluate_and_filter_perturbations_boolq(
+                    batch, model, tokenizer, generator_tokenizer, generator,
+                    paraphrase_tokenizer, paraphrase_classifier, args, max_seq_length,
+                    accelerator.num_processes, logger)
+            else:
+                perturbation_info, mask = evaluate_and_filter_perturbations(
+                    batch, model, tokenizer, generator_tokenizer, generator,
+                    paraphrase_tokenizer, paraphrase_classifier, args, max_seq_length, pad_on_right,
+                    accelerator.num_processes, logger)
             
             model.train()
             with accelerator.accumulate(model):
@@ -345,7 +358,10 @@ def main():
     # -------------------------------------------------------------------------
     # Validation Evaluation
     # -------------------------------------------------------------------------
-    metric = evaluate.load("squad_v2" if args.version_2_with_negative else "squad")
+    if getattr(args, "dataset_name", "").lower() == "boolq":
+        metric = evaluate.load("accuracy")
+    else:
+        metric = evaluate.load("squad_v2" if args.version_2_with_negative else "squad")
 
     logger.info("***** Running Validation Evaluation *****")
     logger.info(f"  Num examples = {len(validation_dataset)}")
