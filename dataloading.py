@@ -1,4 +1,6 @@
 import random
+from functools import partial
+
 import datasets
 import pandas as pd
 from datasets import load_dataset
@@ -80,6 +82,62 @@ def load_retrieval_dataset(args):
     df_new = df_new[retrieval_column_names]
     retrieval_dataset = datasets.Dataset.from_pandas(df_new)
     return retrieval_dataset
+
+
+def prepare_validation_features(examples, tokenizer, question_column_name, context_column_name,
+                                pad_on_right, max_seq_length, args):
+    """
+    Tokenize validation/prediction examples, keeping the example_id and offset mappings
+    needed to map predictions back to the original context.
+
+    Defined at module level (rather than nested in preprocess_datasets) so it can be
+    reused by standalone evaluation scripts. Bind the per-run constants with
+    functools.partial before passing to Dataset.map.
+    """
+    # Some of the questions have lots of whitespace on the left, which is not useful and will make the
+    # truncation of the context fail (the tokenized question will take a lots of space). So we remove that
+    # left whitespace
+    examples[question_column_name] = [q.lstrip() for q in examples[question_column_name]]
+
+    # Tokenize our examples with truncation and maybe padding, but keep the overflows using a stride. This results
+    # in one example possible giving several features when a context is long, each of those features having a
+    # context that overlaps a bit the context of the previous feature.
+    tokenized_examples = tokenizer(
+        examples[question_column_name if pad_on_right else context_column_name],
+        examples[context_column_name if pad_on_right else question_column_name],
+        truncation="only_second" if pad_on_right else "only_first",
+        max_length=max_seq_length,
+        stride=args.doc_stride,
+        return_overflowing_tokens=True,
+        return_offsets_mapping=True,
+        padding="max_length" if args.pad_to_max_length else False,
+    )
+
+    # Since one example might give us several features if it has a long context, we need a map from a feature to
+    # its corresponding example. This key gives us just that.
+    sample_mapping = tokenized_examples.pop("overflow_to_sample_mapping")
+
+    # For evaluation, we will need to convert our predictions to substrings of the context, so we keep the
+    # corresponding example_id and we will store the offset mappings.
+    tokenized_examples["example_id"] = []
+
+    for i in range(len(tokenized_examples["input_ids"])):
+        # Grab the sequence corresponding to that example (to know what is the context and what is the question).
+        sequence_ids = tokenized_examples.sequence_ids(i)
+        context_index = 1 if pad_on_right else 0
+
+        # One example can give several spans, this is the index of the example containing this span of text.
+        sample_index = sample_mapping[i]
+        tokenized_examples["example_id"].append(examples["id"][sample_index])
+
+        # Set to None the offset_mapping that are not part of the context so it's easy to determine if a token
+        # position is part of the context or not.
+        tokenized_examples["offset_mapping"][i] = [
+            (o if sequence_ids[k] == context_index else None)
+            for k, o in enumerate(tokenized_examples["offset_mapping"][i])
+        ]
+
+    return tokenized_examples
 
 
 def preprocess_datasets(args, raw_datasets, tokenizer, accelerator, max_seq_length, pad_on_right):
@@ -305,52 +363,17 @@ def preprocess_datasets(args, raw_datasets, tokenizer, accelerator, max_seq_leng
             # Number of samples might increase during Feature Creation, We select only specified max samples
             train_dataset = train_dataset.select(range(args.max_train_samples))
 
-    # Validation preprocessing
-    def prepare_validation_features(examples):
-        # Some of the questions have lots of whitespace on the left, which is not useful and will make the
-        # truncation of the context fail (the tokenized question will take a lots of space). So we remove that
-        # left whitespace
-        examples[question_column_name] = [q.lstrip() for q in examples[question_column_name]]
-
-        # Tokenize our examples with truncation and maybe padding, but keep the overflows using a stride. This results
-        # in one example possible giving several features when a context is long, each of those features having a
-        # context that overlaps a bit the context of the previous feature.
-        tokenized_examples = tokenizer(
-            examples[question_column_name if pad_on_right else context_column_name],
-            examples[context_column_name if pad_on_right else question_column_name],
-            truncation="only_second" if pad_on_right else "only_first",
-            max_length=max_seq_length,
-            stride=args.doc_stride,
-            return_overflowing_tokens=True,
-            return_offsets_mapping=True,
-            padding="max_length" if args.pad_to_max_length else False,
-        )
-
-        # Since one example might give us several features if it has a long context, we need a map from a feature to
-        # its corresponding example. This key gives us just that.
-        sample_mapping = tokenized_examples.pop("overflow_to_sample_mapping")
-
-        # For evaluation, we will need to convert our predictions to substrings of the context, so we keep the
-        # corresponding example_id and we will store the offset mappings.
-        tokenized_examples["example_id"] = []
-
-        for i in range(len(tokenized_examples["input_ids"])):
-            # Grab the sequence corresponding to that example (to know what is the context and what is the question).
-            sequence_ids = tokenized_examples.sequence_ids(i)
-            context_index = 1 if pad_on_right else 0
-
-            # One example can give several spans, this is the index of the example containing this span of text.
-            sample_index = sample_mapping[i]
-            tokenized_examples["example_id"].append(examples["id"][sample_index])
-
-            # Set to None the offset_mapping that are not part of the context so it's easy to determine if a token
-            # position is part of the context or not.
-            tokenized_examples["offset_mapping"][i] = [
-                (o if sequence_ids[k] == context_index else None)
-                for k, o in enumerate(tokenized_examples["offset_mapping"][i])
-            ]
-
-        return tokenized_examples
+    # Validation preprocessing (uses the module-level prepare_validation_features with the
+    # per-run constants bound via partial so Dataset.map sees a single-argument callable)
+    prepare_validation_features_fn = partial(
+        prepare_validation_features,
+        tokenizer=tokenizer,
+        question_column_name=question_column_name,
+        context_column_name=context_column_name,
+        pad_on_right=pad_on_right,
+        max_seq_length=max_seq_length,
+        args=args,
+    )
 
     if "validation" not in raw_datasets:
         raise ValueError("--do_eval requires a validation dataset")
@@ -367,7 +390,7 @@ def preprocess_datasets(args, raw_datasets, tokenizer, accelerator, max_seq_leng
     # Validation Feature Creation
     with accelerator.main_process_first():
         eval_dataset = eval_examples.map(
-            prepare_validation_features,
+            prepare_validation_features_fn,
             batched=True,
             num_proc=args.preprocessing_num_workers,
             remove_columns=column_names,
@@ -391,7 +414,7 @@ def preprocess_datasets(args, raw_datasets, tokenizer, accelerator, max_seq_leng
         # Predict Feature Creation
         with accelerator.main_process_first():
             predict_dataset = predict_examples.map(
-                prepare_validation_features,
+                prepare_validation_features_fn,
                 batched=True,
                 num_proc=args.preprocessing_num_workers,
                 remove_columns=column_names,
