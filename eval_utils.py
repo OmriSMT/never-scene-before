@@ -7,7 +7,8 @@ from eval import postprocess_qa_predictions
 
 def create_and_fill_np_array(start_or_end_logits, dataset, max_len):
     """
-    Create and fill numpy array of size len_of_validation_data * max_length_of_output_tensor
+    Create and fill numpy array of size len_of_validation_data * max_length_of_output_tensor.
+    Used for SQuAD span-extraction post-processing.
 
     Args:
         start_or_end_logits(:obj:`tensor`):
@@ -40,7 +41,7 @@ def create_and_fill_np_array(start_or_end_logits, dataset, max_len):
 
 def post_processing_function(examples, features, predictions, args, answer_column_name, stage="eval"):
     """
-    Post-processing: we match the start logits and end logits to answers in the original context.
+    SQuAD Post-processing: we match the start logits and end logits to answers in the original context.
     """
     predictions = postprocess_qa_predictions(
         examples=examples,
@@ -67,7 +68,85 @@ def post_processing_function(examples, features, predictions, args, answer_colum
     return EvalPrediction(predictions=formatted_predictions, label_ids=references)
 
 
-def run_evaluation(model, dataloader, dataset, examples, accelerator, metric, args, logger, answer_column_name, is_test=False):
+# unified run_evaluation 
+def run_evaluation(model, dataloader, dataset, examples, accelerator, metric, args, logger,
+                   answer_column_name, is_test=False):
+    """
+    Run evaluation for either the BoolQ or SQuAD pipeline.
+
+    Dispatch is based on args.dataset_name:
+      - "boolq"  → binary classification: argmax of logits, accuracy + F1
+      - anything else → SQuAD span extraction with post-processing
+
+    Args:
+        model:              the task model
+        dataloader:         eval or test DataLoader
+        dataset:            tokenized HF Dataset (used for SQuAD post-processing)
+        examples:           raw HF Dataset examples (used for SQuAD post-processing)
+        accelerator:        Accelerator instance
+        metric:             evaluate metric object
+        args:               parsed argument namespace
+        logger:             accelerate logger
+        answer_column_name: name of the answer column in examples
+        is_test:            whether this is the test split (for logging)
+
+    Returns:
+        dict of metric results
+    """
+    if getattr(args, "dataset_name", "").lower() == "boolq":
+        return _run_evaluation_boolq(model, dataloader, accelerator, metric, logger, is_test)
+    else:
+        return _run_evaluation_squad(model, dataloader, dataset, examples, accelerator, metric,
+                                     args, logger, answer_column_name, is_test)
+
+
+
+# BoolQ evaluation
+def _run_evaluation_boolq(model, dataloader, accelerator, metric, logger, is_test=False):
+    """
+    Evaluate a sequence-classification model on BoolQ.
+
+    Collects logits from every batch, takes argmax for predictions, and
+    computes accuracy (and F1 if the metric supports it).
+
+    Returns:
+        dict, e.g. {"accuracy": 0.834, "f1": 0.831}
+    """
+    model.eval()
+    all_preds = []
+    all_labels = []
+
+    for batch in dataloader:
+        with torch.no_grad():
+            outputs = model(**batch)
+
+        # outputs.logits: [batch_size, 2]
+        preds = outputs.logits.argmax(dim=-1)
+
+        # gather across processes (no-op on single gpu)
+        preds = accelerator.gather_for_metrics(preds)
+        labels = accelerator.gather_for_metrics(batch["labels"])
+
+        all_preds.extend(preds.cpu().numpy())
+        all_labels.extend(labels.cpu().numpy())
+
+    split_name = "Test" if is_test else "Validation"
+    metrics = metric.compute(predictions=all_preds, references=all_labels)
+    logger.info(f"BoolQ {split_name} metrics: {metrics}")
+    return metrics
+
+
+    
+# SQuAD evaluation
+def _run_evaluation_squad(model, dataloader, dataset, examples, accelerator, metric, args, logger, answer_column_name, is_test=False):
+    """
+    Evaluate a span-extraction QA model on SQuAD / SQuAD-v2.
+    Collects start/end logits, post-processes them into answer strings,
+    and computes the SQuAD metric.
+
+    Returns:
+        dict, e.g. {"exact_match": 84.1, "f1": 91.2}
+    """
     all_start_logits = []
     all_end_logits = []
 
