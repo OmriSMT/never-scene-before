@@ -4,6 +4,8 @@ from transformers import get_scheduler
 
 from perturb import produce_no_answer_batch
 
+def _is_boolq(args):
+    return getattr(args, "dataset_name", "").lower() == "boolq"
 
 def create_optimizers_and_scheduler(model, generator, args, train_dataloader):
     # Split weights in two groups, one with weight decay and the other not.
@@ -49,8 +51,52 @@ def create_optimizers_and_scheduler(model, generator, args, train_dataloader):
 
     return optimizer, optim_gen, lr_scheduler
 
-
 def calculate_and_backward_perturb_loss(model, perturbation_info, accelerator, args, mask, logger):
+    """
+    Compute and back-propagate the perturbation loss.
+
+    For SQuAD: cross-entropy on start/end positions.
+    For BoolQ: cross-entropy on the flipped binary label (the perturbed passage
+               should push the model toward predicting the *opposite* answer).
+    """
+    if _is_boolq(args):
+        _perturb_loss_boolq(model, perturbation_info, accelerator, args, logger)
+    else:
+        _perturb_loss_squad(model, perturbation_info, accelerator, args, mask, logger)
+
+def _perturb_loss_boolq(model, perturbation_info, accelerator, args, logger):
+    """
+    BoolQ perturbation loss.
+
+    Each entry in perturbation_info contains:
+        perturbed_batch:  tokenized batch of perturbed passages
+        flipped_labels:   1-D LongTensor with the *flipped* gold label
+                          (1→0 or 0→1) — the target for the negative example
+        mask:             1-D float tensor; 1.0 = use this example, 0.0 = skip
+
+    We apply per-example cross-entropy weighted by the mask.
+    """
+    loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
+    for pt_idx in range(args.num_perturbation_examples_per_batch):
+        perturbed_batch = perturbation_info[pt_idx]["perturbed_batch"]
+        flipped_labels  = perturbation_info[pt_idx]["flipped_labels"]   # LongTensor [B]
+        mask            = perturbation_info[pt_idx]["mask"]              # FloatTensor [B]
+
+        outputs = model(**perturbed_batch)
+        logits = outputs.logits                          # [B, 2]
+        per_example_loss = loss_fct(logits, flipped_labels) * mask
+
+        p_loss = (
+            per_example_loss.sum() / mask.sum()
+            if mask.sum() > 0
+            else 0.0 * per_example_loss.sum()
+        )
+        p_loss *= args.weight_perturb / args.num_perturbation_examples_per_batch
+        accelerator.backward(p_loss)
+        logger.info(f"BoolQ perturbed [idx: {pt_idx}] loss: {p_loss.detach().float()}")
+
+
+def _perturb_loss_squad(model, perturbation_info, accelerator, args, mask, logger):
     for pt_idx in range(args.num_perturbation_examples_per_batch):
         perturbed_batch = perturbation_info[pt_idx]['perturbed_batch']
         p_start_positions = perturbation_info[pt_idx]['p_start_positions']
@@ -83,7 +129,50 @@ def calculate_and_backward_perturb_loss(model, perturbation_info, accelerator, a
         logger.info(f"perturbed [idx: {pt_idx}] loss: {p_loss.detach().float()}")
 
 
-def calculate_and_backward_permute_loss(model, batch, tokenizer, accelerator, args, max_seq_length, pad_on_right, logger):
+# Permute loss
+def calculate_and_backward_permute_loss(model, batch, tokenizer, accelerator, args,
+                                        max_seq_length, pad_on_right, logger):
+    """
+    Compute and back-propagate the permutation loss.
+
+    For SQuAD: shuffle contexts across questions to create no-answer examples.
+    For BoolQ: shuffle passages across questions; the permuted pair is always
+               a negative (label = 0 = False), since the passage no longer
+               supports the original question's answer.
+    """
+    if _is_boolq(args):
+        _permute_loss_boolq(model, batch, tokenizer, accelerator, args, max_seq_length, logger)
+    else:
+        _permute_loss_squad(model, batch, tokenizer, accelerator, args, max_seq_length, pad_on_right, logger)
+
+
+def _permute_loss_boolq(model, batch, tokenizer, accelerator, args, max_seq_length, logger):
+    """
+    BoolQ permutation loss.
+
+    Randomly permute passages across examples in the batch.  Any example
+    whose passage is now from a *different* question gets label 0 (False /
+    no-longer-answerable).  Examples that happen to receive their own passage
+    keep their original label and are excluded from the loss via the mask.
+    """
+    loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
+    for pm_idx in range(args.num_permutation_examples_per_batch):
+        batch_perm, perm_labels, mask = produce_boolq_perturb_batch(
+            batch, tokenizer, args, max_seq_length, logger
+        )
+        outputs = model(**batch_perm)
+        per_example_loss = loss_fct(outputs.logits, perm_labels) * mask
+        loss = (
+            per_example_loss.sum() / mask.sum()
+            if mask.sum() > 0
+            else 0.0 * per_example_loss.sum()
+        )
+        loss *= args.weight_permute / args.num_permutation_examples_per_batch
+        accelerator.backward(loss)
+        logger.info(f"BoolQ perm [idx: {pm_idx}] loss: {loss.detach().float()}")
+
+
+def _permute_loss_squad(model, batch, tokenizer, accelerator, args, max_seq_length, pad_on_right, logger):
     for pm_idx in range(args.num_permutation_examples_per_batch):
         batch_perm, mask = produce_no_answer_batch(batch, tokenizer, args, max_seq_length, pad_on_right, logger)
         outputs = model(**batch_perm)
@@ -103,6 +192,7 @@ def calculate_and_backward_permute_loss(model, batch, tokenizer, accelerator, ar
         logger.info(f"perm [idx: {pm_idx}] loss: {loss.detach().float()}")
 
 
+# Retrieval loss (SQuAD only)
 def calculate_and_backward_retrieval_loss(model, retrieval_dataloader, retrieval_dataloader_iterable, accelerator, args, logger):
     for rt_idx in range(args.num_retrieval):
         try:
