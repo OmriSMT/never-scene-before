@@ -71,10 +71,50 @@ def mask_questions(questions, strategy, contexts=None, start_positions=None, end
     return masked_batch
 
 
+def mask_passages(passages, strategy, labels=None, device=None):
+    """
+    Mask a batch of passages (BoolQ) with a given masking strategy.
+
+    Unlike SQuAD, BoolQ has no answer-span boundary — the whole passage is
+    the evidence.  We mask at the *word* level (same as mask_questions) so
+    that BART can infill plausible substitutions.
+
+    Args:
+        passages: list of passage strings
+        strategy: masking strategy instance
+        labels:   list of int labels (0/1), forwarded to loss-based strategies
+        device:   torch device, forwarded to loss-based strategies
+
+    Returns:
+        masked_batch: list of masked passage strings
+    """
+    masked_batch = []
+    for p_idx, passage in enumerate(passages):
+        words = passage.split(" ")
+
+        extra = {}
+        if labels is not None:  extra["label"]  = labels[p_idx]
+        if device is not None:  extra["device"] = device
+
+        mask = strategy(words, **extra)
+        passage_splits_masked = np.array([words], dtype=object)
+        try:
+            passage_splits_masked[mask] = "<mask>"
+        except Exception:
+            print(passage)
+            print(words)
+            print(mask)
+            print(passage_splits_masked)
+
+        masked_passage = " ".join(passage_splits_masked[0])
+        masked_batch.append(masked_passage)
+    return masked_batch
+    
+
 def perturb(batch, tokenizer, generator_tokenizer, generator, tok_para, clf,
         args, max_seq_length, pad_on_right, num_processes = 1, model=None, mask_strategy=None):
     """
-    Main perturbation functionality. 
+    Main SQuAD perturbation functionality. 
     Perturb questions (tokenized by BERT) using BART given contexts
     Args:
         batch: A batch containing input_ids, attention_masks, and ground truth labels
@@ -460,6 +500,311 @@ def evaluate_and_filter_perturbations(
                 'p_start_positions': p_start_positions,
                 'p_end_positions': p_end_positions,
                 'mask': mask
+            })
+
+    return perturbation_info, mask
+
+
+# BoolQ perturbation
+def perturb_boolq(batch, tokenizer, generator_tokenizer, generator, tok_para, clf,
+                  args, max_seq_length, num_processes=1, mask_strategy=None):
+    """
+    BoolQ perturbation step: mask and infill *passages* (not questions).
+
+    The paraphrase classifier is applied to the (original passage, perturbed passage)
+    pair.  A perturbed passage that is NOT a paraphrase is a candidate negative.
+
+    Args:
+        batch:               tokenized BoolQ batch (has 'labels' key, no start/end positions)
+        tokenizer:           RoBERTa tokenizer
+        generator_tokenizer: BART tokenizer
+        generator:           BART-large
+        tok_para:            paraphrase classifier tokenizer
+        clf:                 paraphrase classifier (QQP)
+        args:                argument namespace
+        max_seq_length:      max token length
+        num_processes:       number of GPUs
+        mask_strategy:       masking strategy; defaults to RandomMaskStrategy()
+
+    Returns:
+        perturbed_batch:  tokenized batch with perturbed passages and *flipped* labels
+        info:             list of dicts {question, passage, masked_passage, perturbation}
+        success_perturb:  bool
+        mask:             LongTensor [B]; 1 = use for training, 0 = skip
+    """
+    if mask_strategy is None:
+        mask_strategy = RandomMaskStrategy()
+
+    device = generator.device
+    original = tokenizer.batch_decode(batch["input_ids"])
+    cls_token = tokenizer.cls_token
+    sep_token = tokenizer.sep_token
+
+    # BoolQ is encoded as [CLS] question [SEP] passage [SEP] (question first, pad_on_right)
+    questions = [list(filter(None, x.split(sep_token)))[0].split(cls_token)[1].lstrip().rstrip()
+                 for x in original]
+    passages = [list(filter(None, x.split(sep_token)))[1].split(sep_token)[0].lstrip().rstrip()
+                 for x in original]
+    labels = batch["labels"].cpu().tolist()
+
+    masked_passages = mask_passages(
+        passages,
+        strategy=mask_strategy,
+        labels=labels,
+        device=device,
+    )
+
+    input_ids = generator_tokenizer(
+        masked_passages,
+        return_tensors="pt",
+        padding=True,
+        max_length=max_seq_length,
+        return_overflowing_tokens=False,
+        truncation=True,
+    ).input_ids
+
+    if num_processes > 1:
+        generating_func = generator.module.generate
+    else:
+        generating_func = generator.generate
+
+    perturbed_passages = generator_tokenizer.batch_decode(
+        generating_func(
+            input_ids.to(device),
+            num_return_sequences=1,
+            no_repeat_ngram_size=3,
+            max_length=max_seq_length,
+            do_sample=True,
+            top_p=0.95,
+            early_stopping=True,
+        ),
+        skip_special_tokens=True,
+    )
+
+    info = [
+        {"question": q, "passage": p, "masked_passage": m, "perturbation": pt}
+        for q, p, m, pt in zip(questions, passages, masked_passages, perturbed_passages)
+    ]
+
+    success_perturb = True
+    try:
+        tokenized_new_examples = tokenizer(
+            [q.lstrip() for q in questions],
+            perturbed_passages,
+            truncation=True,
+            max_length=max_seq_length,
+            return_overflowing_tokens=False,
+            return_offsets_mapping=False,
+            padding="max_length" if args.pad_to_max_length else False,
+        )
+
+        # Paraphrase classifier on (original passage, perturbed passage)
+        tokenized_pair = tok_para(
+            passages,
+            perturbed_passages,
+            truncation=True,
+            max_length=max_seq_length,
+            return_overflowing_tokens=False,
+            return_offsets_mapping=False,
+            padding="max_length" if args.pad_to_max_length else False,
+        )
+        tokenized_pair_cuda = {k: torch.LongTensor(v).to(device) for k, v in tokenized_pair.items()}
+        clf_output = clf(**tokenized_pair_cuda)
+        # mask=1 - not paraphrase (good candidate negative)
+        # mask=0 - paraphrase (passage barely changed → useless negative)
+        mask = 1 - torch.argmax(torch.softmax(clf_output.logits, axis=1), axis=1)
+
+    except Exception:
+        tokenized_new_examples = batch
+        success_perturb = False
+        mask = torch.zeros(args.per_device_train_batch_size, dtype=torch.long).to(device)
+
+    if success_perturb:
+        perturbed_batch = {}
+        perturbed_batch["input_ids"] = torch.LongTensor(
+            tokenized_new_examples["input_ids"]
+        ).to(device).detach()
+        if "token_type_ids" in tokenized_new_examples:
+            perturbed_batch["token_type_ids"] = torch.LongTensor(
+                tokenized_new_examples["token_type_ids"]
+            ).to(device).detach()
+        perturbed_batch["attention_mask"] = torch.LongTensor(
+            tokenized_new_examples["attention_mask"]
+        ).to(device).detach()
+        # target for the perturbed example is the flipped label (True→False or False→True)
+        perturbed_batch["labels"] = (1 - batch["labels"]).to(device)
+
+        return perturbed_batch, info, success_perturb, mask
+    else:
+        perturbed_batch = {k: v.clone() for k, v in batch.items()}
+        return perturbed_batch, info, success_perturb, mask
+
+
+def produce_boolq_perturb_batch(batch, tokenizer, args, max_seq_length, logger, logging=False):
+    """
+    Create passage-permuted negative examples for BoolQ.
+
+    Randomly shuffles passages across examples in the batch.  Any example
+    that received a *different* passage is now a False example (the passage
+    no longer supports the original question's true answer), so its target
+    label is set to 0.  Examples that happened to receive their own passage
+    keep their original label and are excluded from the loss via the mask.
+
+    Args:
+        batch:          tokenized BoolQ batch
+        tokenizer:      RoBERTa tokenizer
+        args:           argument namespace
+        max_seq_length: max token length
+        logger:         accelerate logger
+        logging:        whether to log pairs
+
+    Returns:
+        perturbed_batch:  tokenized batch with permuted passages
+        perm_labels:      LongTensor [B] target labels (0 for permuted, original for unchanged)
+        mask:             FloatTensor [B]; 1.0 = include in loss, 0.0 = exclude
+    """
+    device = batch["input_ids"].device
+    B = args.per_device_train_batch_size
+
+    ids = torch.arange(B)
+    perm_ids = torch.randperm(B)
+    permuted = (ids != perm_ids)   # True where the passage has been swapped
+
+    cls_token = tokenizer.cls_token
+    sep_token = tokenizer.sep_token
+    original = tokenizer.batch_decode(batch["input_ids"])
+    questions = [list(filter(None, x.split(sep_token)))[0].split(cls_token)[1].lstrip().rstrip()
+                 for x in original]
+    passages = [list(filter(None, x.split(sep_token)))[1].split(sep_token)[0].lstrip().rstrip()
+                 for x in original]
+
+    perm_passages = np.array(passages)[perm_ids.numpy()].tolist()
+    labels = batch["labels"].cpu().tolist()
+
+    # permuted passages hence label becomes 0 (False); unchanged - keep original label
+    perm_labels_list = [0 if permuted[i] else labels[i] for i in range(B)]
+    perm_labels = torch.LongTensor(perm_labels_list).to(device)
+    mask = permuted.float().to(device)  # only back-prop on actually-permuted examples
+
+    if logging:
+        for q, c, gt in zip(questions, perm_passages, permuted):
+            logger.info("----BoolQ Permutation Pairs----")
+            logger.info(f"Question: {q}")
+            logger.info(f"Passage:  {c}")
+            logger.info(f"Permuted: {gt}")
+
+    try:
+        tokenized_new_examples = tokenizer(
+            [q.lstrip() for q in questions],
+            perm_passages,
+            truncation=True,
+            max_length=max_seq_length,
+            return_overflowing_tokens=False,
+            return_offsets_mapping=False,
+            padding="max_length" if args.pad_to_max_length else False,
+        )
+        perturbed_batch = {}
+        perturbed_batch["input_ids"] = torch.LongTensor(
+            tokenized_new_examples["input_ids"]
+        ).to(device)
+        if "token_type_ids" in tokenized_new_examples:
+            perturbed_batch["token_type_ids"] = torch.LongTensor(
+                tokenized_new_examples["token_type_ids"]
+            ).to(device)
+        perturbed_batch["attention_mask"] = torch.LongTensor(
+            tokenized_new_examples["attention_mask"]
+        ).to(device)
+        perturbed_batch["labels"] = perm_labels
+
+        return perturbed_batch, perm_labels, mask
+
+    except Exception:
+        logger.info("Failed BoolQ Permutation")
+        # Return unchanged batch, all labels unchanged, zero mask (no loss contribution)
+        return batch, batch["labels"], torch.zeros(B, dtype=torch.float).to(device)
+
+def evaluate_and_filter_perturbations_boolq(
+    batch, model, tokenizer, generator_tokenizer, generator,
+    paraphrase_tokenizer, paraphrase_classifier, args, max_seq_length,
+    num_processes, logger
+):
+    """
+    BoolQ pipeline:
+    Scout forward pass → generate passage perturbations → filter by label-flip criterion.
+
+    A perturbed passage is a *useful* negative if:
+      1. The perturbation is NOT a paraphrase of the original passage (mask=1 from clf).
+      2. The model's prediction on the perturbed passage DIFFERS from its prediction
+         on the original passage — i.e., the perturbation actually changed the model output.
+      3. The perturbation is different from the original passage (success_perturb=True).
+
+    The target label stored in perturbation_info['flipped_labels'] is always the
+    *flipped* gold label (1-original_label), so optimization.py can use it directly
+    as the cross-entropy target for training the model to predict the opposite class.
+
+    Returns:
+        perturbation_info: list of dicts with keys:
+            perturbed_batch, flipped_labels, mask
+        mask: final mask from the last perturbation attempt
+    """
+    perturbation_info = []
+
+    with torch.no_grad():
+        outputs = model(**batch)
+        original_preds = outputs.logits.argmax(dim=-1) # [B] predicted class on original
+
+        for pt_idx in range(args.num_perturbation_examples_per_batch):
+            perturbed_batch, info, success_perturb, mask = perturb_boolq(
+                batch, tokenizer, generator_tokenizer, generator,
+                paraphrase_tokenizer, paraphrase_classifier,
+                args, max_seq_length, num_processes,
+            )
+
+            if not args.use_paraphrase_detector:
+                mask = torch.ones_like(mask)
+
+            # Model predictions on perturbed passages
+            p_outputs  = model(**perturbed_batch)
+            perturbed_preds = p_outputs.logits.argmax(dim=-1) # [B]
+
+            gold_labels    = batch["labels"] # [B]  original gold labels
+            flipped_labels = (1 - gold_labels).to(model.device) # [B]  flip target
+
+            for i in range(args.per_device_train_batch_size):
+                orig_pred = original_preds[i].item()
+                pert_pred = perturbed_preds[i].item()
+                gold      = gold_labels[i].item()
+                same_passage = (info[i]["perturbation"] == info[i]["passage"])
+
+                # filter 1: perturbation failed (BART returned original text)
+                if not success_perturb or same_passage:
+                    logger.info("BoolQ: unsuccessful perturbation. Disregard.")
+                    mask[i] = 0
+                    continue
+
+                # filter 2: model was already wrong on original — skip noisy example
+                if orig_pred != gold:
+                    logger.info("BoolQ: model wrong on original. Disregard.")
+                    mask[i] = 0
+                    continue
+
+                # filter 3: perturbation didn't change the model prediction — not a useful hard negative
+                if pert_pred == orig_pred:
+                    logger.info("BoolQ: perturbation did not flip prediction. Disregard.")
+                    mask[i] = 0
+                    continue
+
+                # survived all filters - makes a valid hard negative
+                logger.info(
+                    f"BoolQ: valid perturbation "
+                    f"(gold={gold}, orig_pred={orig_pred}, pert_pred={pert_pred})"
+                )
+
+            logger.info(f"BoolQ mask: {mask}")
+            perturbation_info.append({
+                "perturbed_batch": perturbed_batch,
+                "flipped_labels":  flipped_labels,
+                "mask":            mask.float(),
             })
 
     return perturbation_info, mask
