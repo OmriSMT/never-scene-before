@@ -6,13 +6,11 @@ import argparse
 import json
 import logging
 import os
+from functools import partial
 
 import datasets
-import numpy as np
-import torch
 from datasets import load_dataset
 from torch.utils.data import DataLoader
-from tqdm.auto import tqdm
 
 import evaluate
 import transformers
@@ -24,10 +22,11 @@ from transformers import (
     AutoModelForQuestionAnswering,
     AutoTokenizer,
     DataCollatorWithPadding,
-    EvalPrediction,
     default_data_collator,
 )
-from utils import postprocess_qa_predictions
+
+from dataloading import prepare_validation_features
+from eval_utils import run_evaluation
 
 logger = get_logger(__name__)
 
@@ -106,30 +105,15 @@ def main():
     pad_on_right = tokenizer.padding_side == "right"
     max_seq_length = min(args.max_seq_length, tokenizer.model_max_length)
 
-    def prepare_validation_features(examples):
-        examples[question_column_name] = [q.lstrip() for q in examples[question_column_name]]
-        tokenized_examples = tokenizer(
-            examples[question_column_name if pad_on_right else context_column_name],
-            examples[context_column_name if pad_on_right else question_column_name],
-            truncation="only_second" if pad_on_right else "only_first",
-            max_length=max_seq_length,
-            stride=args.doc_stride,
-            return_overflowing_tokens=True,
-            return_offsets_mapping=True,
-            padding="max_length" if args.pad_to_max_length else False,
-        )
-        sample_mapping = tokenized_examples.pop("overflow_to_sample_mapping")
-        tokenized_examples["example_id"] = []
-        for i in range(len(tokenized_examples["input_ids"])):
-            sequence_ids = tokenized_examples.sequence_ids(i)
-            context_index = 1 if pad_on_right else 0
-            sample_index = sample_mapping[i]
-            tokenized_examples["example_id"].append(examples["id"][sample_index])
-            tokenized_examples["offset_mapping"][i] = [
-                (o if sequence_ids[k] == context_index else None)
-                for k, o in enumerate(tokenized_examples["offset_mapping"][i])
-            ]
-        return tokenized_examples
+    prepare_validation_features_fn = partial(
+        prepare_validation_features,
+        tokenizer=tokenizer,
+        question_column_name=question_column_name,
+        context_column_name=context_column_name,
+        pad_on_right=pad_on_right,
+        max_seq_length=max_seq_length,
+        args=args,
+    )
 
     eval_examples = raw_datasets["validation"]
     if args.max_eval_samples is not None:
@@ -137,7 +121,7 @@ def main():
 
     with accelerator.main_process_first():
         eval_dataset = eval_examples.map(
-            prepare_validation_features,
+            prepare_validation_features_fn,
             batched=True,
             num_proc=args.preprocessing_num_workers,
             remove_columns=column_names,
@@ -157,42 +141,6 @@ def main():
         eval_dataset_for_model, collate_fn=data_collator, batch_size=args.per_device_eval_batch_size
     )
 
-    def post_processing_function(examples, features, predictions, stage="eval"):
-        predictions = postprocess_qa_predictions(
-            examples=examples,
-            features=features,
-            predictions=predictions,
-            version_2_with_negative=args.version_2_with_negative,
-            n_best_size=args.n_best_size,
-            max_answer_length=args.max_answer_length,
-            no_answer_probability_threshold=args.no_answer_probability_threshold,
-            without_threshold=(not args.use_threshold),
-            output_dir=args.output_dir,
-            prefix=stage,
-        )
-        if args.version_2_with_negative:
-            formatted_predictions = [
-                {"id": k, "prediction_text": v, "no_answer_probability": prob}
-                for k, (v, prob) in predictions.items()
-            ]
-        else:
-            formatted_predictions = [{"id": k, "prediction_text": v} for k, (v, prob) in predictions.items()]
-        references = [{"id": ex["id"], "answers": ex[answer_column_name]} for ex in examples]
-        return EvalPrediction(predictions=formatted_predictions, label_ids=references)
-
-    def create_and_fill_np_array(start_or_end_logits, dataset, max_len):
-        step = 0
-        logits_concat = np.full((len(dataset), max_len), -100, dtype=np.float64)
-        for i, output_logit in enumerate(start_or_end_logits):
-            batch_size = output_logit.shape[0]
-            cols = output_logit.shape[1]
-            if step + batch_size < len(dataset):
-                logits_concat[step: step + batch_size, :cols] = output_logit
-            else:
-                logits_concat[step:, :cols] = output_logit[: len(dataset) - step]
-            step += batch_size
-        return logits_concat
-
     metric = evaluate.load("squad_v2" if args.version_2_with_negative else "squad")
 
     model, eval_dataloader = accelerator.prepare(model, eval_dataloader)
@@ -201,29 +149,10 @@ def main():
     logger.info(f"  Num examples = {len(eval_dataset)}")
     logger.info(f"  Batch size = {args.per_device_eval_batch_size}")
 
-    all_start_logits = []
-    all_end_logits = []
-    model.eval()
-
-    for batch in tqdm(eval_dataloader, disable=not accelerator.is_local_main_process):
-        with torch.no_grad():
-            outputs = model(**batch)
-            start_logits = outputs.start_logits
-            end_logits = outputs.end_logits
-            if not args.pad_to_max_length:
-                start_logits = accelerator.pad_across_processes(start_logits, dim=1, pad_index=-100)
-                end_logits = accelerator.pad_across_processes(end_logits, dim=1, pad_index=-100)
-            all_start_logits.append(accelerator.gather_for_metrics(start_logits).cpu().numpy())
-            all_end_logits.append(accelerator.gather_for_metrics(end_logits).cpu().numpy())
-
-    max_len = max([x.shape[1] for x in all_start_logits])
-    start_logits_concat = create_and_fill_np_array(all_start_logits, eval_dataset, max_len)
-    end_logits_concat = create_and_fill_np_array(all_end_logits, eval_dataset, max_len)
-    del all_start_logits, all_end_logits
-
-    prediction = post_processing_function(eval_examples, eval_dataset, (start_logits_concat, end_logits_concat))
-    eval_metric = metric.compute(predictions=prediction.predictions, references=prediction.label_ids)
-    logger.info(f"Evaluation metrics: {eval_metric}")
+    eval_metric = run_evaluation(
+        model, eval_dataloader, eval_dataset, eval_examples,
+        accelerator, metric, args, logger, answer_column_name,
+    )
 
     if accelerator.is_main_process:
         logger.info(json.dumps(eval_metric, indent=4))
