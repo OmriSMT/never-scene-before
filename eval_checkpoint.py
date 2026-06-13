@@ -28,6 +28,10 @@ from transformers import (
     default_data_collator,
 )
 from utils import postprocess_qa_predictions
+from ace_whqa import load_ace_whqa, load_ace_whqa_all, SPLIT_FILES
+
+# Friendly split names accepted by --ace_whqa_split (besides "all").
+ACE_WHQA_SPLITS = list(SPLIT_FILES)
 
 logger = get_logger(__name__)
 
@@ -47,7 +51,12 @@ def parse_args():
     parser.add_argument("--output_dir", type=str, required=True,
                         help="Directory to write predictions and metrics.")
     parser.add_argument("--dataset_name", type=str, default="squad_v2",
-                        help="HuggingFace dataset name (default: squad_v2).")
+                        help="HuggingFace dataset name (default: squad_v2), or 'ace-whqa' to "
+                             "evaluate on the local ACE-whQA corpus (see --ace_whqa_split).")
+    parser.add_argument("--ace_whqa_split", type=str, default="all",
+                        choices=["all", *ACE_WHQA_SPLITS],
+                        help="Which ACE-whQA slice to evaluate when --dataset_name ace-whqa "
+                             "(default: all = the three slices concatenated).")
     parser.add_argument("--version_2_with_negative", action="store_true",
                         help="Use SQuAD v2 metric (with unanswerable questions).")
     parser.add_argument("--max_seq_length", type=int, default=384)
@@ -92,7 +101,20 @@ def main():
         os.makedirs(args.output_dir, exist_ok=True)
     accelerator.wait_for_everyone()
 
-    raw_datasets = load_dataset(args.dataset_name)
+    if args.dataset_name == "ace-whqa":
+        if not args.version_2_with_negative:
+            logger.warning(
+                "ACE-whQA contains unanswerable questions; you probably want "
+                "--version_2_with_negative for correct (SQuAD v2) scoring."
+            )
+        if args.ace_whqa_split == "all":
+            ace_validation = load_ace_whqa_all()
+        else:
+            ace_validation = load_ace_whqa(args.ace_whqa_split)
+        logger.info(f"Loaded ACE-whQA split '{args.ace_whqa_split}' ({len(ace_validation)} examples)")
+        raw_datasets = datasets.DatasetDict({"validation": ace_validation})
+    else:
+        raw_datasets = load_dataset(args.dataset_name)
 
     config = AutoConfig.from_pretrained(args.model_name_or_path)
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, use_fast=True)
