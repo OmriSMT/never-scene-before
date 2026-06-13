@@ -13,13 +13,24 @@ from perturb import get_topk, flatten_column
 
 logger = get_logger(__name__)
 
+def _is_boolq(args):
+    """
+    This function recognizes if the dataset is boolq or else
+    """
+    return getattr(args, "dataset_name", "").lower() == "boolq"
+
+
+# dataset loading 
 
 def load_raw_datasets(args):
     """
     Load the raw train/validation/test datasets from the Hub or from local files.
-
+        
     Args:
-        args: parsed argument namespace
+        args: parsed argument namespace.
+        if BoolQ set --dataset_name boolq.
+        if SQuAD set --dataset_name squad or --dataset_name squad_v2 (or use file args).
+        
 
     Returns:
         raw_datasets: a DatasetDict with 'train', 'validation', and optionally 'test' splits
@@ -52,6 +63,7 @@ def load_raw_datasets(args):
 def load_retrieval_dataset(args):
     """
     Build the retrieval-based no-answer dataset from the CSV files specified in args.
+    Used only for the SQuAD pipeline (num_retrieval > 0).
 
     Args:
         args: parsed argument namespace
@@ -70,7 +82,9 @@ def load_retrieval_dataset(args):
     index_to_title = {i : t for (i,t) in enumerate(df_index_context_title['title'].tolist())}
     num_rows = len(df)
     df['context_id'] = df.apply(lambda x: context_to_index[x.context], axis=1)
-    df['retrieved_psgs_new'] = df.apply(lambda x: get_topk(x.retrieved_psgs, x.context_id, num_rows, topk=args.num_retrieval), axis=1)
+    df['retrieved_psgs_new'] = df.apply(
+        lambda x: get_topk(x.retrieved_psgs, x.context_id, num_rows, topk=args.num_retrieval), axis=1
+    )
     df_new = flatten_column(df, 'retrieved_psgs_new')
     df_new['context_original'] = df_new['context']
     df_new['title_original'] = df_new['title']
@@ -82,7 +96,104 @@ def load_retrieval_dataset(args):
     return retrieval_dataset
 
 
-def preprocess_datasets(args, raw_datasets, tokenizer, accelerator, max_seq_length, pad_on_right):
+# Preprocessing - BoolQ
+def preprocess_datasets_boolq(args, raw_datasets, tokenizer, accelerator, max_seq_length):
+    """
+    Tokenize and label BoolQ splits for sequence classification.
+
+    BoolQ schema: { "question": str, "passage": str, "answer": bool }
+    Labels: 0 = False, 1 = True.
+
+    Returns the same 7-tuple as preprocess_datasets so train.py stays unchanged:
+        train_dataset,
+        eval_examples, eval_dataset,
+        predict_examples, predict_dataset,
+        column_names, answer_column_name
+    """
+    column_names = raw_datasets["train"].column_names
+    answer_column_name = "answer"   
+
+    def tokenize_boolq(examples):
+        """Encode question + passage and convert bool label to int."""
+        tokenized = tokenizer(
+            [q.lstrip() for q in examples["question"]],
+            examples["passage"],
+            truncation=True,
+            max_length=max_seq_length,
+            padding="max_length" if args.pad_to_max_length else False,
+        )
+        
+        # Convert bool into int (False=0, True=1)
+        tokenized["labels"] = [int(a) for a in examples["answer"]]
+        return tokenized
+
+    # train split
+    if "train" not in raw_datasets:
+        raise ValueError("--do_train requires a train dataset")
+    train_dataset = raw_datasets["train"]
+    if args.max_train_samples is not None:
+        train_dataset = train_dataset.select(range(args.max_train_samples))
+    with accelerator.main_process_first():
+        train_dataset = train_dataset.map(
+            tokenize_boolq,
+            batched=True,
+            num_proc=args.preprocessing_num_workers,
+            remove_columns=column_names,
+            load_from_cache_file=not args.overwrite_cache,
+            desc="Tokenising BoolQ train split",
+        )
+
+    # log a few random training samples
+    for index in random.sample(range(len(train_dataset)), min(3, len(train_dataset))):
+        logger.info(f"BoolQ train sample {index}: {train_dataset[index]}")
+
+    # validation split 
+    if "validation" not in raw_datasets:
+        raise ValueError("--do_eval requires a validation dataset")
+    eval_examples = raw_datasets["validation"]
+    if args.max_eval_samples is not None:
+        eval_examples = eval_examples.select(range(args.max_eval_samples))
+    with accelerator.main_process_first():
+        eval_dataset = eval_examples.map(
+            tokenize_boolq,
+            batched=True,
+            num_proc=args.preprocessing_num_workers,
+            remove_columns=column_names,
+            load_from_cache_file=not args.overwrite_cache,
+            desc="Tokenising BoolQ validation split",
+        )
+    if args.max_eval_samples is not None:
+        eval_dataset = eval_dataset.select(range(args.max_eval_samples))
+
+    # test / predict split 
+    predict_examples = None
+    predict_dataset = None
+    if args.do_predict:
+        split = "test" if "test" in raw_datasets else "validation"
+        predict_examples = raw_datasets[split]
+        if args.max_predict_samples is not None:
+            predict_examples = predict_examples.select(range(args.max_predict_samples))
+        with accelerator.main_process_first():
+            predict_dataset = predict_examples.map(
+                tokenize_boolq,
+                batched=True,
+                num_proc=args.preprocessing_num_workers,
+                remove_columns=column_names,
+                load_from_cache_file=not args.overwrite_cache,
+                desc="Tokenising BoolQ test split",
+            )
+        if args.max_predict_samples is not None:
+            predict_dataset = predict_dataset.select(range(args.max_predict_samples))
+
+    return (
+        train_dataset,
+        eval_examples, eval_dataset,
+        predict_examples, predict_dataset,
+        column_names, answer_column_name,
+    )
+
+# Preprocessing - SQuAD
+def preprocess_datasets_squad(args, raw_datasets, tokenizer, accelerator, max_seq_length, pad_on_right):
     """
     Tokenize and label the train, validation, and (optionally) test splits.
 
@@ -413,10 +524,22 @@ def preprocess_datasets(args, raw_datasets, tokenizer, accelerator, max_seq_leng
         column_names, answer_column_name,
     )
 
+# unified function for preprocessing the datasets
+def preprocess_datasets(args, raw_datasets, tokenizer, accelerator, max_seq_length, pad_on_right):
+    """
+    This function route to BoolQ or SQuAD preprocessing based on args.dataset_name.
+    Returns the same 7-tuple in both cases so train.py is unchanged.
+    """
+    if _is_boolq(args):
+        return preprocess_datasets_boolq(args, raw_datasets, tokenizer, accelerator, max_seq_length)
+    else:
+        return preprocess_datasets_squad(args, raw_datasets, tokenizer, accelerator, max_seq_length, pad_on_right)
+
 
 def preprocess_retrieval_dataset(args, retrieval_dataset, tokenizer, accelerator, max_seq_length, pad_on_right, column_names):
     """
     Tokenize and label the retrieval dataset using the same prepare_train_features logic.
+    This function is relavant only for SQuAD pipeline
 
     Args:
         args: parsed argument namespace
@@ -500,10 +623,14 @@ def preprocess_retrieval_dataset(args, retrieval_dataset, tokenizer, accelerator
     return retrieval_dataset
 
 
+# DataLoaders
 def build_dataloaders(args, train_dataset, eval_dataset, predict_dataset, tokenizer, accelerator,
                       retrieval_dataset=None):
     """
     Build all DataLoaders for training, evaluation, and (optionally) prediction.
+    
+    For BoolQ the eval/predict datasets have no 'example_id' or 'offset_mapping' columns,
+    so they are used directly without the remove_columns step applied in the SQuAD branch.
 
     Args:
         args: parsed argument namespace
@@ -540,16 +667,29 @@ def build_dataloaders(args, train_dataset, eval_dataset, predict_dataset, tokeni
             retrieval_dataset, shuffle=True, collate_fn=data_collator, batch_size=args.per_device_train_batch_size, drop_last=True,
         )
 
-    eval_dataset_for_model = eval_dataset.remove_columns(["example_id", "offset_mapping"])
-    eval_dataloader = DataLoader(
-        eval_dataset_for_model, collate_fn=data_collator, batch_size=args.per_device_eval_batch_size
-    )
-
-    predict_dataloader = None
-    if predict_dataset is not None:
-        predict_dataset_for_model = predict_dataset.remove_columns(["example_id", "offset_mapping"])
-        predict_dataloader = DataLoader(
-            predict_dataset_for_model, collate_fn=data_collator, batch_size=args.per_device_eval_batch_size
+    # eval predictions are diffrent between BoolQ and SquAD
+    if _is_boolq(args):
+        # BoolQ eval/predict datasets are plain classification datasets which are no extra columns to strip
+        eval_dataloader = DataLoader(
+            eval_dataset, collate_fn=data_collator, batch_size=args.per_device_eval_batch_size
         )
+        predict_dataloader = None
+        if predict_dataset is not None:
+            predict_dataloader = DataLoader(
+                predict_dataset, collate_fn=data_collator, batch_size=args.per_device_eval_batch_size
+            )
+    else:
+        # SQuAD eval/predict datasets carry example_id and offset_mapping for post-processing
+        eval_dataset_for_model = eval_dataset.remove_columns(["example_id", "offset_mapping"])
+        eval_dataloader = DataLoader(
+            eval_dataset_for_model, collate_fn=data_collator, batch_size=args.per_device_eval_batch_size
+        )
+    
+        predict_dataloader = None
+        if predict_dataset is not None:
+            predict_dataset_for_model = predict_dataset.remove_columns(["example_id", "offset_mapping"])
+            predict_dataloader = DataLoader(
+                predict_dataset_for_model, collate_fn=data_collator, batch_size=args.per_device_eval_batch_size
+            )
 
     return train_dataloader, eval_dataloader, predict_dataloader, retrieval_dataloader
