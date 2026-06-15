@@ -12,7 +12,6 @@ dependencies:
   - cffi
   - click
   - cryptography
-  - mkl
   - mpmath
   - networkx
   - pillow
