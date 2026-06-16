@@ -76,9 +76,9 @@ def parse_args():
     parser.add_argument(
         '--mask_strategy',
         type=str,
-        choices=['random', 'loss', 'pos', 'ner'],
+        choices=['random', 'pos', 'ner'],
         default='random',
-        help=f"Select environment mode (choices: {', '.join(['random', 'loss', 'pos', 'ner'])})"
+        help=f"Select environment mode (choices: {', '.join(['random','pos', 'ner'])})"
     )
     parser.add_argument(
         "--model_name_or_path",
