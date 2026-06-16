@@ -77,13 +77,8 @@ class NERMaskStrategy:
             )
 
     def __call__(self, words, **kwargs):
-        device = kwargs.get("device", None)
-
         length = len(words)
         mask = torch.zeros(size=(1, length), dtype=torch.bool)
-
-        if device is not None:
-            mask = mask.to(device)
 
         if length == 0:
             return mask

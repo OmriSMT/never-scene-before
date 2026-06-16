@@ -93,7 +93,6 @@ def main():
     else:
         mask_strategy = strategy()
 
-    logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
 
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
