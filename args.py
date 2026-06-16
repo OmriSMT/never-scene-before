@@ -74,6 +74,13 @@ def parse_args():
         help="If passed, pad all samples to `max_seq_length`. Otherwise, dynamic padding is used.",
     )
     parser.add_argument(
+        "--mask_strategy",
+        type=str,
+        choices=["random", "ner"],
+        default="random",
+        help="Masking strategy to use for question perturbation.",
+    )
+    parser.add_argument(
         "--model_name_or_path",
         type=str,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
@@ -325,6 +332,16 @@ def parse_args():
     parser.add_argument(
         "--retrieval_context_title_path",
         type=str, default="./data/train_documents.csv"
+    )
+
+    parser.add_argument(
+        "--ner_labels",
+        nargs="+",
+        default=[
+            "PERSON", "ORG", "GPE", "LOC", "DATE", "TIME",
+            "QUANTITY", "ORDINAL", "CARDINAL"
+        ],
+        help="Named entity labels to use when mask_strategy=ner.",
     )
 
     parser.add_argument("--remove_no_answer", action="store_true", help="force remove datapoint that has no answer")

@@ -356,7 +356,8 @@ def flatten_column(df, column_name):
 
 def evaluate_and_filter_perturbations(
     batch, model, tokenizer, generator_tokenizer, generator,
-    paraphrase_tokenizer, paraphrase_classifier, args, max_seq_length, pad_on_right, num_processes, logger
+    paraphrase_tokenizer, paraphrase_classifier, args, max_seq_length,
+    pad_on_right, num_processes, logger, mask_strategy=None
 ):
     """
     Handles the scouting forward pass, perturbation generation, and
@@ -378,7 +379,7 @@ def evaluate_and_filter_perturbations(
         for pt_idx in range(args.num_perturbation_examples_per_batch):
             perturbed_batch, info, success_perturb, mask = \
                 perturb(batch, tokenizer, generator_tokenizer, generator, paraphrase_tokenizer, paraphrase_classifier, \
-                        args, max_seq_length, pad_on_right, num_processes)
+         		 args, max_seq_length, pad_on_right, num_processes, mask_strategy=mask_strategy)
             if not args.use_paraphrase_detector:
                 mask = torch.ones_like(mask)
             p_outputs = model(**perturbed_batch)  # Model prediction on perturbed examples

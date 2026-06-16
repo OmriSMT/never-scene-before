@@ -59,12 +59,17 @@ from perturb import evaluate_and_filter_perturbations
 from optimization import (create_optimizers_and_scheduler, calculate_and_backward_retrieval_loss,
                           calculate_and_backward_permute_loss, calculate_and_backward_perturb_loss)
 from eval_utils import run_evaluation
+from mask_strategies import RandomMaskStrategy, NERMaskStrategy
 
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.23.0")
 require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/question-answering/requirements.txt")
 logger = get_logger(__name__)
+MASK_STRATEGIES = {
+    "random": RandomMaskStrategy,
+    "ner": NERMaskStrategy,
+}
 
 
 def main():
@@ -79,6 +84,17 @@ def main():
         level=logging.INFO,
     )
     args = parse_args()
+
+    strategy = MASK_STRATEGIES.get(args.mask_strategy, None)
+    if strategy is None:
+        raise Exception(f"Mask strategy {args.mask_strategy} is not supported.")
+    elif args.mask_strategy == "ner":
+        mask_strategy = strategy(target_ents=args.ner_labels)
+    else:
+        mask_strategy = strategy()
+
+    logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
+
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
     send_example_telemetry("run_qa_no_trainer", args)
@@ -273,11 +289,11 @@ def main():
             model.eval()
             # first run we calculate only regular loss
             no_pert_and_perm = (step <= args.custom_warmup_steps and epoch == 0)
-
+            
             perturbation_info, mask = evaluate_and_filter_perturbations(
                 batch, model, tokenizer, generator_tokenizer, generator,
                 paraphrase_tokenizer, paraphrase_classifier, args, max_seq_length, pad_on_right,
-                accelerator.num_processes, logger)
+                accelerator.num_processes, logger, mask_strategy=mask_strategy)
             
             model.train()
             with accelerator.accumulate(model):
