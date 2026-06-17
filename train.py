@@ -84,19 +84,6 @@ def main():
         level=logging.INFO,
     )
     args = parse_args()
-
-    strategy = MASK_STRATEGIES.get(args.mask_strategy, None)
-    if strategy is None:
-        raise Exception(f"Mask strategy {args.mask_strategy} is not supported.")
-    elif args.mask_strategy == "ner":
-        mask_strategy = strategy(target_ents=args.ner_labels)
-        logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
-        logger.info(f"NER labels used for masking: {args.ner_labels}")
-    else:
-        mask_strategy = strategy()
-        logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
-
-
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
     send_example_telemetry("run_qa_no_trainer", args)
@@ -269,6 +256,16 @@ def main():
         #     resume_step = int(training_difference.replace("step_", ""))
         #     starting_epoch = resume_step // len(train_dataloader)
         #     resume_step -= starting_epoch * len(train_dataloader)
+    strategy = MASK_STRATEGIES.get(args.mask_strategy, None)
+    if strategy is None:
+        raise Exception(f"Mask strategy {args.mask_strategy} is not supported.")
+    elif args.mask_strategy == "ner":
+        mask_strategy = strategy(target_ents=args.ner_labels)
+        logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
+        logger.info(f"NER labels used for masking: {args.ner_labels}")
+    else:
+        mask_strategy = strategy()
+        logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
     
     generator.eval()
     paraphrase_classifier.eval()
