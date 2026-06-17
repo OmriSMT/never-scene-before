@@ -72,14 +72,12 @@ class POSMaskStrategy(MaskStrategy):
     def __init__(
         self,
         target_pos=("NOUN", "PROPN", "VERB", "ADJ", "NUM"),
-        min_masks=1,
         *args,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
 
         self.target_pos = set(target_pos)
-        self.min_masks = min_masks
 
         if POSMaskStrategy._nlp is None:
             import spacy
@@ -100,27 +98,40 @@ class POSMaskStrategy(MaskStrategy):
         if length == 0:
             return mask
 
-        doc = POSMaskStrategy._nlp(" ".join(words))
+        
+        text = " ".join(words)
+        doc = POSMaskStrategy._nlp(text)
+        
+        # Build char offset -> original word index map.
+        # This avoids bugs when spaCy tokenization differs from the words list,
+        # for example: "didn't" -> "did" + "n't".
+        char_to_word = {}
+        char = 0
+        for word_idx, word in enumerate(words):
+            for c in range(char, char + len(word)):
+                char_to_word[c] = word_idx
+            char += len(word) + 1  # +1 for the space
 
         candidates = []
-        for i, token in enumerate(doc):
-            if i >= length:
-                break
+        for token in doc:
             if token.pos_ in self.target_pos:
-                candidates.append(i)
+                word_idx = char_to_word.get(token.idx)
+                if word_idx is not None and word_idx < length:
+                    candidates.append(word_idx)
+
+        candidates = sorted(set(candidates))
 
         if len(candidates) == 0:
             return mask
-
+            
         if self._batch_prob is None:
             self.sample_mask_proportion()
 
-        k = int(len(candidates) * self._batch_prob)
-
-        if self.min_masks is not None:
-            k = max(self.min_masks, k)
-
+        k = int(length * self._batch_prob)
         k = min(k, len(candidates))
+
+        if k == 0:
+            return mask
 
         selected = np.random.choice(candidates, size=k, replace=False)
 

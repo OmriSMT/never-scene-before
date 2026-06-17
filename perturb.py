@@ -99,14 +99,6 @@ def perturb(batch, tokenizer, generator_tokenizer, generator, paraphrase_tokeniz
     start_positions = batch["start_positions"].cpu().tolist()
     end_positions   = batch["end_positions"].cpu().tolist()
 
-    if mask_strategy is None:
-        if args.mask_strategy == "random":
-            mask_strategy = RandomMaskStrategy()
-        elif args.mask_strategy == "pos":
-            mask_strategy = POSMaskStrategy(target_pos=args.pos_tags)
-        else:
-            raise ValueError(f"Unknown mask strategy: {args.mask_strategy}")
-
     device = generator.device 
     original = tokenizer.batch_decode(batch['input_ids'])
     cls_token = tokenizer.cls_token
