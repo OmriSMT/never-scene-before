@@ -91,6 +91,7 @@ def main():
     elif args.mask_strategy == "ner":
         mask_strategy = strategy(target_ents=args.ner_labels)
         logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
+        logger.info(f"NER labels used for masking: {args.ner_labels}")
     else:
         mask_strategy = strategy()
         logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
