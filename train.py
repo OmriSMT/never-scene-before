@@ -90,8 +90,10 @@ def main():
         raise Exception(f"Mask strategy {args.mask_strategy} is not supported.")
     elif args.mask_strategy == "ner":
         mask_strategy = strategy(target_ents=args.ner_labels)
+        logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
     else:
         mask_strategy = strategy()
+        logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
 
 
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
@@ -119,6 +121,7 @@ def main():
 
     # If passed along, set the training seed now.
     if args.seed is not None:
+        logger.info(f"Setting random seed to {args.seed}")
         set_seed(args.seed)
 
     # # Handle the repository creation
