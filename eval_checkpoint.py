@@ -7,7 +7,8 @@ import json
 import logging
 import os
 from functools import partial
-
+from collections import defaultdict
+import numpy as np
 import datasets
 from datasets import load_dataset
 from torch.utils.data import DataLoader
@@ -47,8 +48,6 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate a saved QA model checkpoint")
     parser.add_argument("--model_name_or_path", type=str, required=True,
                         help="Path to saved checkpoint or HuggingFace model identifier.")
-    parser.add_argument("--output_dir", type=str, required=True,
-                        help="Directory to write predictions and metrics.")
     parser.add_argument("--dataset_name", type=str, default="squad_v2",
                         help="HuggingFace dataset name (default: squad_v2), or 'ace-whqa' to "
                              "evaluate on the local ACE-whQA corpus (see --ace_whqa_split).")
@@ -80,6 +79,9 @@ def main():
 
     accelerator = Accelerator()
 
+    model_name_or_path = args.model_name_or_path
+    output_dir = os.path.join(model_name_or_path, "eval_results", args.dataset_name)
+
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
@@ -97,7 +99,7 @@ def main():
         set_seed(args.seed)
 
     if accelerator.is_main_process:
-        os.makedirs(args.output_dir, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
     accelerator.wait_for_everyone()
 
     if args.dataset_name == "ace-whqa":
@@ -115,70 +117,83 @@ def main():
     else:
         raw_datasets = load_dataset(args.dataset_name)
 
-    config = AutoConfig.from_pretrained(args.model_name_or_path)
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, use_fast=True)
-    model = AutoModelForQuestionAnswering.from_pretrained(args.model_name_or_path, config=config)
+    merged_dict = defaultdict(list)
 
-    column_names = raw_datasets["validation"].column_names
-    question_column_name = "question" if "question" in column_names else column_names[0]
-    context_column_name = "context" if "context" in column_names else column_names[1]
-    answer_column_name = "answers" if "answers" in column_names else column_names[2]
+    for model_seed in [model_seed for model_seed in os.listdir(os.path.join("checkpoints", "squad")) if model_name_or_path in model_seed]:
+        logger.info(f"Evaluating model checkpoint: {model_seed}")
+        model_seed_path = os.path.join("checkpoints", "squad", model_seed)
+        config = AutoConfig.from_pretrained(model_seed_path)
+        tokenizer = AutoTokenizer.from_pretrained(model_seed_path, use_fast=True)
+        model = AutoModelForQuestionAnswering.from_pretrained(model_seed_path, config=config)
 
-    pad_on_right = tokenizer.padding_side == "right"
-    max_seq_length = min(args.max_seq_length, tokenizer.model_max_length)
+        column_names = raw_datasets["validation"].column_names
+        question_column_name = "question" if "question" in column_names else column_names[0]
+        context_column_name = "context" if "context" in column_names else column_names[1]
+        answer_column_name = "answers" if "answers" in column_names else column_names[2]
 
-    prepare_validation_features_fn = partial(
-        prepare_validation_features,
-        tokenizer=tokenizer,
-        question_column_name=question_column_name,
-        context_column_name=context_column_name,
-        pad_on_right=pad_on_right,
-        max_seq_length=max_seq_length,
-        args=args,
-    )
+        pad_on_right = tokenizer.padding_side == "right"
+        max_seq_length = min(args.max_seq_length, tokenizer.model_max_length)
 
-    eval_examples = raw_datasets["validation"]
-    if args.max_eval_samples is not None:
-        eval_examples = eval_examples.select(range(args.max_eval_samples))
-
-    with accelerator.main_process_first():
-        eval_dataset = eval_examples.map(
-            prepare_validation_features_fn,
-            batched=True,
-            num_proc=args.preprocessing_num_workers,
-            remove_columns=column_names,
-            load_from_cache_file=not args.overwrite_cache,
-            desc="Running tokenizer on validation dataset",
+        prepare_validation_features_fn = partial(
+            prepare_validation_features,
+            tokenizer=tokenizer,
+            question_column_name=question_column_name,
+            context_column_name=context_column_name,
+            pad_on_right=pad_on_right,
+            max_seq_length=max_seq_length,
+            args=args,
         )
-    if args.max_eval_samples is not None:
-        eval_dataset = eval_dataset.select(range(args.max_eval_samples))
 
-    if args.pad_to_max_length:
-        data_collator = default_data_collator
-    else:
-        data_collator = DataCollatorWithPadding(tokenizer, pad_to_multiple_of=(8 if accelerator.use_fp16 else None))
+        eval_examples = raw_datasets["validation"]
+        if args.max_eval_samples is not None:
+            eval_examples = eval_examples.select(range(args.max_eval_samples))
 
-    eval_dataset_for_model = eval_dataset.remove_columns(["example_id", "offset_mapping"])
-    eval_dataloader = DataLoader(
-        eval_dataset_for_model, collate_fn=data_collator, batch_size=args.per_device_eval_batch_size
-    )
+        with accelerator.main_process_first():
+            eval_dataset = eval_examples.map(
+                prepare_validation_features_fn,
+                batched=True,
+                num_proc=args.preprocessing_num_workers,
+                remove_columns=column_names,
+                load_from_cache_file=not args.overwrite_cache,
+                desc="Running tokenizer on validation dataset",
+            )
+        if args.max_eval_samples is not None:
+            eval_dataset = eval_dataset.select(range(args.max_eval_samples))
 
-    metric = evaluate.load("squad_v2" if args.version_2_with_negative else "squad")
+        if args.pad_to_max_length:
+            data_collator = default_data_collator
+        else:
+            data_collator = DataCollatorWithPadding(tokenizer, pad_to_multiple_of=(8 if accelerator.use_fp16 else None))
 
-    model, eval_dataloader = accelerator.prepare(model, eval_dataloader)
+        eval_dataset_for_model = eval_dataset.remove_columns(["example_id", "offset_mapping"])
+        eval_dataloader = DataLoader(
+            eval_dataset_for_model, collate_fn=data_collator, batch_size=args.per_device_eval_batch_size
+        )
 
-    logger.info("***** Running Evaluation *****")
-    logger.info(f"  Num examples = {len(eval_dataset)}")
-    logger.info(f"  Batch size = {args.per_device_eval_batch_size}")
+        metric = evaluate.load("squad_v2" if args.version_2_with_negative else "squad")
 
-    eval_metric = run_evaluation(
-        model, eval_dataloader, eval_dataset, eval_examples,
-        accelerator, metric, args, logger, answer_column_name,
-    )
+        model, eval_dataloader = accelerator.prepare(model, eval_dataloader)
+
+        logger.info("***** Running Evaluation *****")
+        logger.info(f"  Num examples = {len(eval_dataset)}")
+        logger.info(f"  Batch size = {args.per_device_eval_batch_size}")
+
+        eval_metric = run_evaluation(
+            model, eval_dataloader, eval_dataset, eval_examples,
+            accelerator, metric, args, logger, answer_column_name, output_dir
+        )
+        for key, value in eval_metric.items():
+            merged_dict[key].append(value)
+
+        if accelerator.is_main_process:
+            logger.info(json.dumps(eval_metric, indent=4))
+
 
     if accelerator.is_main_process:
-        logger.info(json.dumps(eval_metric, indent=4))
-        save_prefixed_metrics(eval_metric, args.output_dir)
+        # Average metrics across seeds
+        averaged_metrics = {key: (np.mean(values), np.std(values)) for key, values in merged_dict.items()}
+        logger.info(json.dumps(averaged_metrics, indent=4))
+        save_prefixed_metrics(averaged_metrics, output_dir)
 
 
 if __name__ == "__main__":

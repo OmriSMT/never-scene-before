@@ -38,7 +38,7 @@ def create_and_fill_np_array(start_or_end_logits, dataset, max_len):
     return logits_concat
 
 
-def post_processing_function(examples, features, predictions, args, answer_column_name, stage="eval"):
+def post_processing_function(examples, features, predictions, args, answer_column_name, output_dir, stage="eval"):
     """
     Post-processing: we match the start logits and end logits to answers in the original context.
     """
@@ -52,7 +52,7 @@ def post_processing_function(examples, features, predictions, args, answer_colum
         #null_score_diff_threshold=args.null_score_diff_threshold,
         no_answer_probability_threshold=args.no_answer_probability_threshold,
         without_threshold=(not args.use_threshold),
-        output_dir=args.output_dir,
+        output_dir=output_dir,
         prefix=stage,
     )
     # Format the result to the format the metric expects.
@@ -67,7 +67,7 @@ def post_processing_function(examples, features, predictions, args, answer_colum
     return EvalPrediction(predictions=formatted_predictions, label_ids=references)
 
 
-def run_evaluation(model, dataloader, dataset, examples, accelerator, metric, args, logger, answer_column_name, is_test=False):
+def run_evaluation(model, dataloader, dataset, examples, accelerator, metric, args, logger, answer_column_name, output_dir, is_test=False):
     all_start_logits = []
     all_end_logits = []
 
@@ -96,7 +96,7 @@ def run_evaluation(model, dataloader, dataset, examples, accelerator, metric, ar
     del all_end_logits
 
     outputs_numpy = (start_logits_concat, end_logits_concat)
-    prediction = post_processing_function(examples, dataset, outputs_numpy, args, answer_column_name)
+    prediction = post_processing_function(examples, dataset, outputs_numpy, args, answer_column_name, output_dir)
     metrics = metric.compute(predictions=prediction.predictions, references=prediction.label_ids)
     if is_test:
         logger.info(f"Test metrics: {metrics}")
