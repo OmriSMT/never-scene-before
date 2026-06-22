@@ -13,7 +13,7 @@ EPOCHS=3
 DATASET=squad
 MODEL_NAME=csarron/roberta-base-squad-v1
 
-OUTPUT_DIR=./checkpoints/${DATASET}/ner_strat_epochs${EPOCHS}_seed${SEED}_pert${NUM_PERT}_perm${NUM_PERM}_retr${NUM_RETV}
+OUTPUT_DIR=./checkpoints/${DATASET}/ner_retr_epochs${EPOCHS}_seed${SEED}_pert${NUM_PERT}_perm${NUM_PERM}_retr${NUM_RETV}
 
 mkdir -p ${OUTPUT_DIR}
 
