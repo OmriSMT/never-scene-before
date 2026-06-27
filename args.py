@@ -334,6 +334,16 @@ def parse_args():
         type=str, default="./data/train_documents.csv"
     )
 
+    parser.add_argument(
+        "--ner_labels",
+        nargs="+",
+        default=[
+            "PERSON", "ORG", "GPE", "LOC", "DATE", "TIME",
+            "QUANTITY", "ORDINAL", "CARDINAL"
+        ],
+        help="Named entity labels to use when mask_strategy=ner.",
+    )
+
     parser.add_argument("--remove_no_answer", action="store_true", help="force remove datapoint that has no answer")
     
     args = parser.parse_args()

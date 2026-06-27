@@ -58,7 +58,7 @@ from perturb import evaluate_and_filter_perturbations
 from optimization import (create_optimizers_and_scheduler, calculate_and_backward_retrieval_loss,
                           calculate_and_backward_permute_loss, calculate_and_backward_perturb_loss)
 from eval_utils import run_evaluation
-from mask_strategies import RandomMaskStrategy, LossMaskStrategy # TODO: import more here when we have them implemented
+from mask_strategies import RandomMaskStrategy, LossMaskStrategy, NERMaskStrategy
 
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
@@ -71,6 +71,7 @@ logger = get_logger(__name__)
 MASK_STRATEGIES = {
     "random": RandomMaskStrategy,
     "loss": LossMaskStrategy,
+    "ner": NERMaskStrategy,
 }
 
 
@@ -267,10 +268,14 @@ def main():
     elif args.mask_strategy == "loss":
         mask_strategy = strategy(model, tokenizer, max_seq_length)
         logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
+    elif args.mask_strategy == "ner":
+        mask_strategy = strategy(target_ents=args.ner_labels)
+        logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
+        logger.info(f"NER labels used for masking: {args.ner_labels}")
     else:
         mask_strategy = strategy()
         logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
-    
+
     generator.eval()
     paraphrase_classifier.eval()
     model.train()
