@@ -2,8 +2,6 @@ import torch
 import numpy as np 
 import pandas as pd
 
-from mask_strategies import RandomMaskStrategy
-
 
 # def mask_questions_and_contexts(questions, contexts):
 #     masked_batch = []
@@ -36,10 +34,10 @@ def mask_questions(questions, strategy, contexts=None, start_positions=None, end
     Args:
         questions:       A batch of string questions
         strategy:        a masking strategy instance (RandomMaskStrategy, etc.)
-        contexts:        list of context strings, required by LossMaskStrategy
-        start_positions: list of int start token positions, required by LossMaskStrategy
-        end_positions:   list of int end token positions,   required by LossMaskStrategy
-        device:          torch device, passed through to LossMaskStrategy
+        contexts:        optional list of context strings for strategies that require context
+        start_positions: optional list of int start token positions
+        end_positions:   optional list of int end token positions
+        device:          torch device, passed through to the mask strategy
     
     Output:
         masked_batch: Masked version of input string questions
@@ -95,7 +93,7 @@ def perturb(batch, tokenizer, generator_tokenizer, generator, paraphrase_tokeniz
         success_perturb: A boolean indicating if the perturbation is successful
         mask: A boolean indicating if the perturbation is a paraphrase
     """
-    # LossMaskStrategy needs start/end positions; others ignore them.
+    # Some strategies may use start/end positions; others ignore them.
     start_positions = batch["start_positions"].cpu().tolist()
     end_positions   = batch["end_positions"].cpu().tolist()
 

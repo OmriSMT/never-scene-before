@@ -344,6 +344,14 @@ def parse_args():
         help="Named entity labels to use when mask_strategy=ner.",
     )
 
+
+    parser.add_argument(
+        "--pos_tags",
+        nargs="+",
+        default=["NOUN", "PROPN", "VERB", "ADJ", "NUM"],
+        help="POS tags to use when mask_strategy=pos.",
+    )
+
     parser.add_argument("--remove_no_answer", action="store_true", help="force remove datapoint that has no answer")
     
     args = parser.parse_args()
