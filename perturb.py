@@ -89,7 +89,6 @@ def perturb(batch, tokenizer, generator_tokenizer, generator, paraphrase_tokeniz
         pad_on_right: if the padding in tokenizer is to the right
         num_processes: for determining if the training is using multiple GPUs
         mask_strategy:  a masking strategy instance; defaults to RandomMaskStrategy()
-    
     Returns:
         perturbed_batch: A batch of perturbed questions
         info: A list of dictionaries containing the original question, masked question, and perturbed question
@@ -354,8 +353,7 @@ def flatten_column(df, column_name):
 
 def evaluate_and_filter_perturbations(
     batch, model, tokenizer, generator_tokenizer, generator,
-    paraphrase_tokenizer, paraphrase_classifier, args, max_seq_length,
-    pad_on_right, num_processes, logger, mask_strategy
+    paraphrase_tokenizer, paraphrase_classifier, args, max_seq_length, pad_on_right, num_processes, logger, mask_strategy
 ):
     """
     Handles the scouting forward pass, perturbation generation, and

@@ -74,11 +74,11 @@ def parse_args():
         help="If passed, pad all samples to `max_seq_length`. Otherwise, dynamic padding is used.",
     )
     parser.add_argument(
-        "--mask_strategy",
+        '--mask_strategy',
         type=str,
-        choices=["random", "ner"],
-        default="random",
-        help="Masking strategy to use for question perturbation.",
+        choices=['random', 'loss', 'pos', 'ner'],
+        default='random',
+        help=f"Select environment mode (choices: {', '.join(['random', 'loss', 'pos', 'ner'])})"
     )
     parser.add_argument(
         "--model_name_or_path",
