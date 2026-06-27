@@ -45,6 +45,7 @@ def mask_questions(questions, strategy, contexts=None, start_positions=None, end
         masked_batch: Masked version of input string questions
     """
     masked_batch = []
+    strategy.sample_mask_proportion()
     for q_idx, question in enumerate(questions):
         words = question.split("?")[0].split(" ")
 
@@ -71,8 +72,8 @@ def mask_questions(questions, strategy, contexts=None, start_positions=None, end
     return masked_batch
 
 
-def perturb(batch, tokenizer, generator_tokenizer, generator, tok_para, clf,
-        args, max_seq_length, pad_on_right, num_processes = 1, model=None, mask_strategy=None):
+def perturb(batch, tokenizer, generator_tokenizer, generator, paraphrase_tokenizer, paraphrase_classifier,
+        args, max_seq_length, pad_on_right, mask_strategy, num_processes = 1, model=None):
     """
     Main perturbation functionality. 
     Perturb questions (tokenized by BERT) using BART given contexts
@@ -81,14 +82,13 @@ def perturb(batch, tokenizer, generator_tokenizer, generator, tok_para, clf,
         tokenizer: the roberta/bert tokenizer
         generator_tokenizer: the tokenizer for the genertor
         generator: A generator that takes in masked questions, and fills perturbed questions
-        tok_para: the tokenizer for the paraphrase classifier/detector
-        clf: A paraphrase detector pretrained on QQP
+        paraphrase_tokenizer: the tokenizer for the paraphrase classifier/detector
+        paraphrase_classifier: A paraphrase detector pretrained on QQP
         args: argparser dictionary
         max_seq_length: maximum sequence length for tokenizers
         pad_on_right: if the padding in tokenizer is to the right
         num_processes: for determining if the training is using multiple GPUs
         mask_strategy:  a masking strategy instance; defaults to RandomMaskStrategy()
-    
     Returns:
         perturbed_batch: A batch of perturbed questions
         info: A list of dictionaries containing the original question, masked question, and perturbed question
@@ -98,9 +98,6 @@ def perturb(batch, tokenizer, generator_tokenizer, generator, tok_para, clf,
     # LossMaskStrategy needs start/end positions; others ignore them.
     start_positions = batch["start_positions"].cpu().tolist()
     end_positions   = batch["end_positions"].cpu().tolist()
-
-    if mask_strategy is None:
-        mask_strategy = RandomMaskStrategy()
 
     device = generator.device 
     original = tokenizer.batch_decode(batch['input_ids'])
@@ -168,7 +165,7 @@ def perturb(batch, tokenizer, generator_tokenizer, generator, tok_para, clf,
 
         # Compute mask if the pertubation is a paraphrase 
         # in our setting, 0 : is paraphrase | 1: not paraphrase
-        tokenized_pair = tok_para(
+        tokenized_pair = paraphrase_tokenizer(
             questions,
             perturbation, 
             truncation=True,
@@ -181,7 +178,7 @@ def perturb(batch, tokenizer, generator_tokenizer, generator, tok_para, clf,
         tokenized_pair_cuda = {}
         for key in tokenized_pair:
             tokenized_pair_cuda[key] = torch.LongTensor(tokenized_pair[key]).to(device)
-        clf_output = clf(**tokenized_pair_cuda)
+        clf_output = paraphrase_classifier(**tokenized_pair_cuda)
         mask = 1 - torch.argmax(torch.softmax(clf_output.logits, axis=1), axis=1)
     except:
         tokenized_new_examples = batch 
@@ -356,7 +353,7 @@ def flatten_column(df, column_name):
 
 def evaluate_and_filter_perturbations(
     batch, model, tokenizer, generator_tokenizer, generator,
-    paraphrase_tokenizer, paraphrase_classifier, args, max_seq_length, pad_on_right, num_processes, logger
+    paraphrase_tokenizer, paraphrase_classifier, args, max_seq_length, pad_on_right, num_processes, logger, mask_strategy
 ):
     """
     Handles the scouting forward pass, perturbation generation, and
@@ -376,9 +373,19 @@ def evaluate_and_filter_perturbations(
         gt_answers = tokenizer.batch_decode(gt_answer_tokens)
 
         for pt_idx in range(args.num_perturbation_examples_per_batch):
-            perturbed_batch, info, success_perturb, mask = \
-                perturb(batch, tokenizer, generator_tokenizer, generator, paraphrase_tokenizer, paraphrase_classifier, \
-                        args, max_seq_length, pad_on_right, num_processes)
+            perturbed_batch, info, success_perturb, mask = perturb(
+                batch=batch,
+                tokenizer=tokenizer,
+                generator_tokenizer=generator_tokenizer,
+                generator=generator,
+                paraphrase_tokenizer=paraphrase_tokenizer,
+                paraphrase_classifier=paraphrase_classifier,
+                args=args,
+                max_seq_length=max_seq_length,
+                pad_on_right=pad_on_right,
+                mask_strategy=mask_strategy,
+                num_processes=num_processes,
+            )
             if not args.use_paraphrase_detector:
                 mask = torch.ones_like(mask)
             p_outputs = model(**perturbed_batch)  # Model prediction on perturbed examples
