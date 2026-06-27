@@ -76,9 +76,9 @@ def parse_args():
     parser.add_argument(
         '--mask_strategy',
         type=str,
-        choices=['random', 'pos', 'ner'],
+        choices=['random', 'loss', 'pos', 'ner'],
         default='random',
-        help=f"Select environment mode (choices: {', '.join(['random','pos', 'ner'])})"
+        help=f"Select environment mode (choices: {', '.join(['random', 'loss', 'pos', 'ner'])})"
     )
     parser.add_argument(
         "--model_name_or_path",
@@ -333,14 +333,25 @@ def parse_args():
         "--retrieval_context_title_path",
         type=str, default="./data/train_documents.csv"
     )
-    
+
+    parser.add_argument(
+        "--ner_labels",
+        nargs="+",
+        default=[
+            "PERSON", "ORG", "GPE", "LOC", "DATE", "TIME",
+            "QUANTITY", "ORDINAL", "CARDINAL"
+        ],
+        help="Named entity labels to use when mask_strategy=ner.",
+    )
+
+
     parser.add_argument(
         "--pos_tags",
         nargs="+",
         default=["NOUN", "PROPN", "VERB", "ADJ", "NUM"],
         help="POS tags to use when mask_strategy=pos.",
     )
-    
+
     parser.add_argument("--remove_no_answer", action="store_true", help="force remove datapoint that has no answer")
     
     args = parser.parse_args()

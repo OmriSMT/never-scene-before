@@ -58,7 +58,7 @@ from perturb import evaluate_and_filter_perturbations
 from optimization import (create_optimizers_and_scheduler, calculate_and_backward_retrieval_loss,
                           calculate_and_backward_permute_loss, calculate_and_backward_perturb_loss)
 from eval_utils import run_evaluation
-from mask_strategies import RandomMaskStrategy, POSMaskStrategy # TODO: import more here when we have them implemented
+from mask_strategies import RandomMaskStrategy, LossMaskStrategy, NERMaskStrategy, POSMaskStrategy
 
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
@@ -70,6 +70,8 @@ logger = get_logger(__name__)
 # The possible mask strategies to choose from the argparser
 MASK_STRATEGIES = {
     "random": RandomMaskStrategy,
+    "loss": LossMaskStrategy,
+    "ner": NERMaskStrategy,
     "pos": POSMaskStrategy,
 }
 
@@ -111,6 +113,7 @@ def main():
 
     # If passed along, set the training seed now.
     if args.seed is not None:
+        logger.info(f"Setting random seed to {args.seed}")
         set_seed(args.seed)
 
     # # Handle the repository creation
@@ -263,12 +266,20 @@ def main():
     strategy = MASK_STRATEGIES.get(args.mask_strategy, None)
     if strategy is None:
         raise Exception(f"Mask strategy {args.mask_strategy} is not supported.")
+    elif args.mask_strategy == "loss":
+        mask_strategy = strategy(model, tokenizer, max_seq_length)
+        logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
+    elif args.mask_strategy == "ner":
+        mask_strategy = strategy(target_ents=args.ner_labels)
+        logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
+        logger.info(f"NER labels used for masking: {args.ner_labels}")
     elif args.mask_strategy == "pos":
         mask_strategy = strategy(target_pos=args.pos_tags)
+        logger.info(f"POS labels used for masking: {args.pos_tags}")
     else:
         mask_strategy = strategy()
-        logger.info(f"Using {strategy} mask strategy for perturbation.")
-    
+        logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
+
     generator.eval()
     paraphrase_classifier.eval()
     model.train()
