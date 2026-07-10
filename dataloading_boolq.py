@@ -23,6 +23,7 @@ def preprocess_boolq(args, raw_datasets, tokenizer, accelerator, max_seq_length)
             examples["passage"],
             truncation="only_second",
             max_length=max_seq_length,
+            stride=args.doc_stride,
             padding="max_length" if args.pad_to_max_length else False,
         )
         tokenized["labels"] = [LABEL2ID[bool(a)] for a in examples["answer"]]
