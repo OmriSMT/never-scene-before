@@ -8,12 +8,12 @@ MASK_STRATEGY=${2:-"pos"}
 python train_boolq_scene.py \
     --model_name_or_path "$MODEL_NAME_OR_PATH" \
     --dataset_name boolq \
-    --max_seq_length 384 \
+    --max_seq_length 256 \
     --pad_to_max_length \
     --per_device_train_batch_size 8 \
     --per_device_eval_batch_size 16 \
-    --learning_rate 2e-5 \
-    --num_train_epochs 3 \
+    --learning_rate 1e-5 \
+    --num_train_epochs 10 \
     --mask_strategy "$MASK_STRATEGY" \
     --num_perturbation_examples_per_batch 1 \
     --weight_perturb 1.0 \
