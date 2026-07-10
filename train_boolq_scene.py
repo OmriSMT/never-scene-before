@@ -72,6 +72,7 @@ def parse_args():
     parser.add_argument("--dataset_name", type=str, default="boolq")
     parser.add_argument("--dataset_config_name", type=str, default=None)
     parser.add_argument("--max_seq_length", type=int, default=384)
+    parser.add_argument("--doc_stride", type=int, default=128)
     parser.add_argument("--pad_to_max_length", action="store_true")
     parser.add_argument("--preprocessing_num_workers", type=int, default=4)
     parser.add_argument("--overwrite_cache", action="store_true")
@@ -81,7 +82,7 @@ def parse_args():
     # --- optimization ------------------------------------------------------------
     parser.add_argument("--per_device_train_batch_size", type=int, default=8)
     parser.add_argument("--per_device_eval_batch_size", type=int, default=16)
-    parser.add_argument("--learning_rate", type=float, default=2e-5)
+    parser.add_argument("--learning_rate", type=float, default=1e-5)
     parser.add_argument("--weight_decay", type=float, default=0.0)
     parser.add_argument("--num_train_epochs", type=int, default=3)
     parser.add_argument("--max_train_steps", type=int, default=None)
@@ -102,6 +103,8 @@ def parse_args():
                          help="Loss weight for meaning-changing (counterfactual) perturbations.")
     parser.add_argument("--weight_permute", type=float, default=1.0,
                          help="Loss weight for meaning-preserving (paraphrase/robustness) perturbations.")
+    parser.add_argument("--num_permutation_examples_per_batch", type=int, default=1,
+                         help="0 disables the passage-permutation augmentation (calculate_and_backward_permute_loss).")
     parser.add_argument("--ner_labels", nargs="+",
                          default=["PERSON", "ORG", "GPE", "LOC", "DATE", "TIME", "QUANTITY", "ORDINAL", "CARDINAL"])
     parser.add_argument("--pos_tags", nargs="+", default=["NOUN", "PROPN", "VERB", "ADJ", "NUM"])
@@ -113,6 +116,54 @@ def parse_args():
 
     return parser.parse_args()
 
+def calculate_and_backward_permute_loss(model, batch, tokenizer, accelerator, args, max_seq_length, logger):
+    """
+    BoolQ counterpart of optimization.py's calculate_and_backward_permute_loss.
+    BoolQ has no "no answer" class to fall back on, so mismatched (question, permuted_passage) pairs
+    are instead self-labeled with the model's own current prediction on that new pairing 
+    which is the same self-labeling idea as the counterfactual at the og purtu 
+    Only entries whose passage actually changed (i.e. the permutation didn't map them back to themselves) contribute to the loss.
+    """
+    device = batch["input_ids"].device
+    batch_size = batch["input_ids"].shape[0]
+ 
+    ids = torch.arange(batch_size)
+    perm_ids = torch.randperm(batch_size)
+    changed_mask = (ids != perm_ids).float().to(device)
+ 
+    cls_token = tokenizer.cls_token
+    sep_token = tokenizer.sep_token
+    original = tokenizer.batch_decode(batch["input_ids"])
+    questions = [list(filter(None, x.split(sep_token)))[0].split(cls_token)[1].lstrip().rstrip() for x in original]
+    passages = [list(filter(None, x.split(sep_token)))[1].split(sep_token)[0].lstrip().rstrip() for x in original]
+    permuted_passages = [passages[i] for i in perm_ids.tolist()]
+ 
+    try:
+        tokenized = tokenizer(
+            questions,
+            permuted_passages,
+            truncation="only_second",
+            max_length=max_seq_length,
+            stride=args.doc_stride,
+            padding="max_length" if args.pad_to_max_length else True,
+            return_tensors="pt",
+        ).to(device)
+    except Exception:
+        logger.info("Failed permutation batch; skipping this step's permute loss")
+        return
+ 
+    outputs = model(input_ids=tokenized["input_ids"], attention_mask=tokenized["attention_mask"])
+    with torch.no_grad():
+        pseudo_labels = outputs.logits.argmax(dim=-1)  # self-labeled, same trick as the SCENE branch
+ 
+    loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
+    per_example_loss = loss_fct(outputs.logits, pseudo_labels) * changed_mask
+    denom = changed_mask.sum()
+    loss = per_example_loss.sum() / denom if denom > 0 else 0.0 * per_example_loss.sum()
+    loss = loss * args.weight_permute / max(args.num_permutation_examples_per_batch, 1)
+ 
+    accelerator.backward(loss)
+    logger.info(f"permute loss: {loss.detach().float()} ({int(changed_mask.sum().item())} changed pairs)")
 
 def run_eval(model, eval_dataloader, accelerator):
     metric = evaluate.combine(["accuracy", "f1"])
@@ -223,6 +274,12 @@ def main():
                     calculate_and_backward_perturb_loss_boolq(
                         model, perturbed_batch, pseudo_labels, keep_mask, accelerator, args, logger,
                     )
+
+                if args.num_permutation_examples_per_batch > 0 and args.weight_permute > 0:
+                    for _ in range(args.num_permutation_examples_per_batch):
+                        calculate_and_backward_permute_loss(
+                            model, batch, tokenizer, accelerator, args, max_seq_length, logger,
+                        )
 
                 optimizer.step()
                 lr_scheduler.step()
