@@ -113,16 +113,24 @@ def main():
     # -------------------------------------------------------------------------
     # Mask strategy
     # -------------------------------------------------------------------------
-    strategy_cls = MASK_STRATEGIES[args.mask_strategy]
-    if args.mask_strategy == "loss":
+    # validate the mask strategy
+    strategy_cls = MASK_STRATEGIES.get(args.mask_strategy, None)
+    if strategy_cls is None:
+        raise Exception(f"Mask strategy {args.mask_strategy} is not supported.")
+    elif args.mask_strategy == "loss":
         mask_strategy = strategy_cls(model, tokenizer, max_seq_length)
+        logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
     elif args.mask_strategy == "ner":
         mask_strategy = strategy_cls(target_ents=args.ner_labels)
+        logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
+        logger.info(f"NER labels used for masking: {args.ner_labels}")
     elif args.mask_strategy == "pos":
         mask_strategy = strategy_cls(target_pos=args.pos_tags)
+        logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
+        logger.info(f"POS labels used for masking: {args.pos_tags}")
     else:
         mask_strategy = strategy_cls()
-    logger.info(f"Using '{args.mask_strategy}' mask strategy for SCENE-style perturbation.")
+        logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
 
     # -------------------------------------------------------------------------
     # Optimizer / scheduler / accelerate prepare

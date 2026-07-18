@@ -23,7 +23,7 @@ echo "DATASET_NAME=${DATASET_NAME}"
 echo "MODEL_NAME=${MODEL_NAME}"
 echo "OUTPUT_DIR=${OUTPUT_DIR}"
 
-accelerate launch train_boolq_accelerate.py \
+accelerate launch train_boolq_base.py \
   --dataset_name ${DATASET_NAME} \
   --model_name_or_path ${MODEL_NAME} \
   --per_device_train_batch_size ${TRAIN_BATCH_SIZE} \
