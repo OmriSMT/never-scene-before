@@ -69,9 +69,9 @@ def parse_args():
     # --- data / model -----------------------------------------------------------
     parser.add_argument("--model_name_or_path", type=str, required=True,
                          help="e.g. shahrukhx01/roberta-base-boolq, or roberta-base to train from scratch on BoolQ.")
-    parser.add_argument("--dataset_name", type=str, default="boolq")
+    parser.add_argument("--dataset_name", type=str, default="google/boolq")
     parser.add_argument("--dataset_config_name", type=str, default=None)
-    parser.add_argument("--max_seq_length", type=int, default=384)
+    parser.add_argument("--max_seq_length", type=int, default=256)
     parser.add_argument("--doc_stride", type=int, default=128)
     parser.add_argument("--pad_to_max_length", action="store_true")
     parser.add_argument("--preprocessing_num_workers", type=int, default=4)
@@ -80,11 +80,11 @@ def parse_args():
     parser.add_argument("--max_eval_samples", type=int, default=None)
 
     # --- optimization ------------------------------------------------------------
-    parser.add_argument("--per_device_train_batch_size", type=int, default=8)
+    parser.add_argument("--per_device_train_batch_size", type=int, default=16)
     parser.add_argument("--per_device_eval_batch_size", type=int, default=16)
     parser.add_argument("--learning_rate", type=float, default=1e-5)
-    parser.add_argument("--weight_decay", type=float, default=0.0)
-    parser.add_argument("--num_train_epochs", type=int, default=3)
+    parser.add_argument("--weight_decay", type=float, default=0.01)
+    parser.add_argument("--num_train_epochs", type=int, default=10)
     parser.add_argument("--max_train_steps", type=int, default=None)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--lr_scheduler_type", type=SchedulerType, default="linear",
