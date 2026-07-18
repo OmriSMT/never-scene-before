@@ -93,6 +93,7 @@ def main():
         transformers.utils.logging.set_verbosity_error()
 
     if args.seed is not None:
+        logger.info(f"Setting random seed to {args.seed}")
         set_seed(args.seed)
 
     if accelerator.is_main_process:
