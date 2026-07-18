@@ -2,15 +2,15 @@
 # Usage: bash run_train_boolq_scene.sh [model_name_or_path] [mask_strategy]
 
 
-MODEL_NAME_OR_PATH=${1:-"shahrukhx01/roberta-base-boolq"}
+MODEL_NAME_OR_PATH=${1:-"./checkpoints/boolq/roberta_base_epochs2_seed42"}
 MASK_STRATEGY=${2:-"pos"}
 
 python train_boolq_scene.py \
     --model_name_or_path "$MODEL_NAME_OR_PATH" \
-    --dataset_name boolq \
+    --dataset_name google/boolq \
     --max_seq_length 256 \
     --pad_to_max_length \
-    --per_device_train_batch_size 8 \
+    --per_device_train_batch_size 16 \
     --per_device_eval_batch_size 16 \
     --learning_rate 1e-5 \
     --num_train_epochs 10 \
