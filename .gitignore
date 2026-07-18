@@ -1,4 +1,5 @@
 data/
+data/boolq-3l/
 checkpoints/
 __pycache__/
 logs/
