@@ -16,7 +16,7 @@ OUTPUT_DIR=./checkpoints/${DATASET}/random_epoch1_bs32_warmup100_pert_${NUM_PERT
 
 mkdir -p ${OUTPUT_DIR}
 
-accelerate launch train.py \
+accelerate launch ../../train.py \
   --model_name_or_path ${MODEL_NAME} \
   --per_device_train_batch_size 32 \
   --num_train_epochs ${EPOCHS} \

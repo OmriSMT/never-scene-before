@@ -8,14 +8,13 @@ WEIGHT_PERM=${WEIGHT_PERM:-1.0}
 
 EPOCHS=10
 DATASET_NAME=google/boolq
-
-MODEL_NAME=${MODEL_NAME:-"./checkpoints/boolq/roberta_base_epochs2_seed42"}
+MODEL_NAME=EyalMaor/roberta-base-boolq-idk
 
 MASK_STRATEGY=random
 SEED=${SEED:-42}
 CONFIG_NAME=${CONFIG_NAME:-"full_pipeline"}
 
-OUTPUT_DIR=./checkpoints/boolq-scene/random_${CONFIG_NAME}_epoch10_seed${SEED}
+OUTPUT_DIR=./checkpoints/boolq/random_${CONFIG_NAME}_epoch10_seed${SEED}
 
 echo "MASK_STRATEGY=${MASK_STRATEGY}"
 echo "SEED=${SEED}"
@@ -27,7 +26,7 @@ echo "OUTPUT_DIR=${OUTPUT_DIR}"
 
 mkdir -p ${OUTPUT_DIR}
 
-accelerate launch train_boolq_scene.py \
+accelerate launch ../../train_boolq_scene.py \
   --model_name_or_path ${MODEL_NAME} \
   --dataset_name ${DATASET_NAME} \
   --per_device_train_batch_size 16 \

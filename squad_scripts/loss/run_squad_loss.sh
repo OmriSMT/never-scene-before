@@ -17,7 +17,7 @@ OUTPUT_DIR=./checkpoints/${DATASET}/loss_and_perm_epochs${EPOCHS}_seed${SEED}_pe
 
 mkdir -p ${OUTPUT_DIR}
 
-accelerate launch train.py \
+accelerate launch ../../train.py \
   --model_name_or_path ${MODEL_NAME} \
   --per_device_train_batch_size 32 \
   --num_train_epochs ${EPOCHS} \

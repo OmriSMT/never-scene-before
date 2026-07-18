@@ -8,14 +8,13 @@ WEIGHT_PERM=${WEIGHT_PERM:-1.0}
 
 EPOCHS=10
 DATASET_NAME=google/boolq
-
-MODEL_NAME=${MODEL_NAME:-"./checkpoints/boolq/roberta_base_epochs2_seed42"}
+MODEL_NAME=EyalMaor/roberta-base-boolq-idk
 
 MASK_STRATEGY=ner
 SEED=${SEED:-42}
 CONFIG_NAME=${CONFIG_NAME:-"full_pipeline"}
 
-OUTPUT_DIR=./checkpoints/boolq-scene/loss_${CONFIG_NAME}_epoch10_seed${SEED}
+OUTPUT_DIR=./checkpoints/boolq/loss_${CONFIG_NAME}_epoch10_seed${SEED}
 
 echo "MASK_STRATEGY=${MASK_STRATEGY}"
 echo "SEED=${SEED}"

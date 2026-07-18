@@ -12,7 +12,7 @@ MODEL_NAME=csarron/roberta-base-squad-v1
 OUTPUT_DIR=./checkpoints/${DATASET}/debug_ner_masking
 mkdir -p ${OUTPUT_DIR}
 
-accelerate launch train.py \
+accelerate launch ../../train.py \
   --model_name_or_path ${MODEL_NAME} \
   --per_device_train_batch_size 2 \
   --num_train_epochs ${EPOCHS} \

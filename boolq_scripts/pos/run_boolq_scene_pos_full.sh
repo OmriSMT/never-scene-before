@@ -8,8 +8,7 @@ WEIGHT_PERM=${WEIGHT_PERM:-1.0}
  
 EPOCHS=10
 DATASET_NAME=google/boolq
- 
-MODEL_NAME=${MODEL_NAME:-"./checkpoints/boolq/roberta_base_epochs2_seed42"}
+MODEL_NAME=EyalMaor/roberta-base-boolq-idk
  
 MASK_STRATEGY=pos
 POS_TAGS=${POS_TAGS:-"NOUN PROPN ADJ NUM"}
@@ -17,7 +16,7 @@ POS_NAME=${POS_NAME:-"no_verb"}
 SEED=${SEED:-42}
 CONFIG_NAME=${CONFIG_NAME:-"full_pipeline"}
  
-OUTPUT_DIR=./checkpoints/boolq-scene/pos_${POS_NAME}_${CONFIG_NAME}_epoch10_seed${SEED}
+OUTPUT_DIR=./checkpoints/boolq/pos_${POS_NAME}_${CONFIG_NAME}_epoch10_seed${SEED}
 
 echo "MASK_STRATEGY=${MASK_STRATEGY}"
 echo "POS_NAME=${POS_NAME}"

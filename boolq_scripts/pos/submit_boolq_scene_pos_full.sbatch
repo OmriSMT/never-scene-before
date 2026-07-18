@@ -26,5 +26,5 @@ echo -e "SLURM_JOB_NODELIST:\t" $SLURM_JOB_NODELIST "\n\n"
 
 ### Start your code below ####
 module load anaconda				
-source activate never_scen				
+source activate never_scene
 bash run_boolq_scene_pos_full.sh			
