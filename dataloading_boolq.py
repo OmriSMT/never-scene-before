@@ -2,8 +2,7 @@ from datasets import load_dataset
 from torch.utils.data import DataLoader
 from transformers import DataCollatorWithPadding, default_data_collator
 
-# shahrukhx01/roberta-base-boolq convention: LABEL_0 = "NO" (False), LABEL_1 = "YES" (True)
-LABEL2ID = {False: 0, True: 1}
+from labels_boolq import LABEL2ID
 
 
 def load_boolq_datasets(args):
@@ -26,7 +25,7 @@ def preprocess_boolq(args, raw_datasets, tokenizer, accelerator, max_seq_length)
             stride=args.doc_stride,
             padding="max_length" if args.pad_to_max_length else False,
         )
-        tokenized["labels"] = [LABEL2ID[bool(a)] for a in examples["answer"]]
+        tokenized["labels"] = [LABEL2ID["YES"] if bool(a) else LABEL2ID["NO"] for a in examples["answer"]]
         return tokenized
 
     with accelerator.main_process_first():

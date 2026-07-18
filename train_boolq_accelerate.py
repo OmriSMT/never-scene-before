@@ -32,7 +32,7 @@ from transformers import (
     get_scheduler,
 )
 
-from labels import ID2LABEL, LABEL2ID, NUM_LABELS
+from labels_boolq import ID2LABEL, LABEL2ID, NUM_LABELS
 from dataloading_boolq import (
     load_boolq_datasets,
     preprocess_boolq,

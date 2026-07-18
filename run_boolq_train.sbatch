@@ -26,5 +26,5 @@ echo -e "SLURM_JOB_NODELIST:\t" $SLURM_JOB_NODELIST "\n\n"
 
 ### Start your code below ####
 module load anaconda				### load anaconda module (must be present when working with conda environments)
-source activate never_scene				### activate a conda environment, replace my_env with your conda environment
+source activate never_scen				### activate a conda environment, replace my_env with your conda environment
 bash run_boolq_full.sh			### run the boolq accelerate training script
