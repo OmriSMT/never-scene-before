@@ -15,8 +15,8 @@ POS_TAGS=${POS_TAGS:-"NOUN PROPN ADJ NUM"}
 POS_NAME=${POS_NAME:-"no_verb"}
 SEED=${SEED:-42}
 CONFIG_NAME=${CONFIG_NAME:-"full_pipeline"}
- 
-OUTPUT_DIR=./checkpoints/boolq/pos_${POS_NAME}_${CONFIG_NAME}_epoch10_seed${SEED}
+
+ OUTPUT_DIR=./checkpoints/boolq/pos_${POS_NAME}_pert${NUM_PERT}_perm${NUM_PERM}_epoch${EPOCHS}_seed${SEED}
 
 echo "MASK_STRATEGY=${MASK_STRATEGY}"
 echo "POS_NAME=${POS_NAME}"

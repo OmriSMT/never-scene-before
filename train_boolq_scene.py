@@ -159,7 +159,7 @@ def main():
 
     for epoch in range(args.num_train_epochs):
         for step, batch in enumerate(train_dataloader):
-            no_pert = (step <= args.custom_warmup_steps and epoch == 0) or args.num_perturbation_examples_per_batch == 0
+            no_pert = (step <= args.custom_warmup_steps and epoch == 0)
 
             if not no_pert:
                 model.eval()
@@ -179,9 +179,10 @@ def main():
                 logger.info(f"model loss: {loss.detach().float()}")
 
                 if not no_pert:
-                    calculate_and_backward_perturb_loss_boolq(
-                        model, perturbed_batch, pseudo_labels, keep_mask, accelerator, args, logger,
-                    )
+                    if args.num_perturbation_examples_per_batch > 0 and args.weight_perturb > 0:
+                        calculate_and_backward_perturb_loss_boolq(
+                            model, perturbed_batch, pseudo_labels, keep_mask, accelerator, args, logger,
+                        )
 
                     if args.num_permutation_examples_per_batch > 0 and args.weight_permute > 0:
                         for _ in range(args.num_permutation_examples_per_batch):

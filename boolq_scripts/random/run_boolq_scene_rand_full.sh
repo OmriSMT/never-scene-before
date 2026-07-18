@@ -1,24 +1,22 @@
 #!/bin/bash
 
 NUM_PERT=${NUM_PERT:-1}
-NUM_PERM=${NUM_PERM:-1}
+NUM_PERM=${NUM_PERM:-0}
 
 WEIGHT_PERT=${WEIGHT_PERT:-1.0}
-WEIGHT_PERM=${WEIGHT_PERM:-1.0}
+WEIGHT_PERM=${WEIGHT_PERM:-0.0}
 
 EPOCHS=10
 DATASET_NAME=google/boolq
 MODEL_NAME=EyalMaor/roberta-base-boolq-idk
 
 MASK_STRATEGY=random
-SEED=${SEED:-42}
-CONFIG_NAME=${CONFIG_NAME:-"full_pipeline"}
+SEED=${SEED:-52}
 
-OUTPUT_DIR=./checkpoints/boolq/random_${CONFIG_NAME}_epoch10_seed${SEED}
+OUTPUT_DIR=./checkpoints/boolq/random_pert${NUM_PERT}_perm${NUM_PERM}_epoch${EPOCHS}_seed${SEED}
 
 echo "MASK_STRATEGY=${MASK_STRATEGY}"
 echo "SEED=${SEED}"
-echo "CONFIG_NAME=${CONFIG_NAME}"
 echo "NUM_PERT=${NUM_PERT}"
 echo "NUM_PERM=${NUM_PERM}"
 echo "MODEL_NAME=${MODEL_NAME}"
