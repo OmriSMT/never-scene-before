@@ -93,6 +93,7 @@ def main():
         transformers.utils.logging.set_verbosity_error()
 
     if args.seed is not None:
+        logger.info(f"Setting random seed to {args.seed}")
         set_seed(args.seed)
 
     if accelerator.is_main_process:
@@ -113,16 +114,24 @@ def main():
     # -------------------------------------------------------------------------
     # Mask strategy
     # -------------------------------------------------------------------------
-    strategy_cls = MASK_STRATEGIES[args.mask_strategy]
-    if args.mask_strategy == "loss":
+    # validate the mask strategy
+    strategy_cls = MASK_STRATEGIES.get(args.mask_strategy, None)
+    if strategy_cls is None:
+        raise Exception(f"Mask strategy {args.mask_strategy} is not supported.")
+    elif args.mask_strategy == "loss":
         mask_strategy = strategy_cls(model, tokenizer, max_seq_length)
+        logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
     elif args.mask_strategy == "ner":
         mask_strategy = strategy_cls(target_ents=args.ner_labels)
+        logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
+        logger.info(f"NER labels used for masking: {args.ner_labels}")
     elif args.mask_strategy == "pos":
         mask_strategy = strategy_cls(target_pos=args.pos_tags)
+        logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
+        logger.info(f"POS labels used for masking: {args.pos_tags}")
     else:
         mask_strategy = strategy_cls()
-    logger.info(f"Using '{args.mask_strategy}' mask strategy for SCENE-style perturbation.")
+        logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
 
     # -------------------------------------------------------------------------
     # Optimizer / scheduler / accelerate prepare
@@ -150,7 +159,7 @@ def main():
 
     for epoch in range(args.num_train_epochs):
         for step, batch in enumerate(train_dataloader):
-            no_pert = (step <= args.custom_warmup_steps and epoch == 0) or args.num_perturbation_examples_per_batch == 0
+            no_pert = (step <= args.custom_warmup_steps and epoch == 0)
 
             if not no_pert:
                 model.eval()
@@ -170,9 +179,10 @@ def main():
                 logger.info(f"model loss: {loss.detach().float()}")
 
                 if not no_pert:
-                    calculate_and_backward_perturb_loss_boolq(
-                        model, perturbed_batch, pseudo_labels, keep_mask, accelerator, args, logger,
-                    )
+                    if args.num_perturbation_examples_per_batch > 0 and args.weight_perturb > 0:
+                        calculate_and_backward_perturb_loss_boolq(
+                            model, perturbed_batch, pseudo_labels, keep_mask, accelerator, args, logger,
+                        )
 
                     if args.num_permutation_examples_per_batch > 0 and args.weight_permute > 0:
                         for _ in range(args.num_permutation_examples_per_batch):
