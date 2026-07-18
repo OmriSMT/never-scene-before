@@ -50,4 +50,6 @@ accelerate launch train_boolq_scene.py \
   --weight_perturb ${WEIGHT_PERT} \
   --weight_permute ${WEIGHT_PERM} \
   --checkpointing_steps epoch \
+  --remove_no_answer \
+  --use_paraphrase_detector \
   --output_dir ${OUTPUT_DIR}

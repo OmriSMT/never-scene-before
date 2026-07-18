@@ -4,7 +4,7 @@ loop, built on top of the functions already in dataloading_boolq.py
 (load_boolq_datasets / preprocess_boolq / build_dataloaders_boolq).
 
 Usage:
-    accelerate launch train_boolq_accelerate.py \
+    accelerate launch train_boolq_base.py \
         --dataset_name google/boolq \
         --model_name_or_path roberta-base \
         --max_seq_length 384 \

@@ -21,7 +21,6 @@ Usage:
         --per_device_train_batch_size 8 \
         --num_train_epochs 3
 """
-import argparse
 import json
 import logging
 import math
@@ -35,7 +34,7 @@ from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import set_seed
 from tqdm.auto import tqdm
-from transformers import SchedulerType
+
 
 from models_boolq import load_models_boolq
 from dataloading_boolq import load_boolq_datasets, preprocess_boolq, build_dataloaders_boolq
@@ -43,6 +42,7 @@ from mask_strategies_boolq import (
     RandomMaskStrategy, POSMaskStrategy, NERMaskStrategy, ClassificationLossMaskStrategy,
 )
 from perturb_boolq import evaluate_and_filter_perturbations_boolq
+from args import parse_args
 from optimization_boolq import create_optimizer_and_scheduler_boolq, calculate_and_backward_perturb_loss_boolq, calculate_and_backward_permute_loss
 
 logger = get_logger(__name__)
@@ -61,60 +61,6 @@ def save_prefixed_metrics(results, output_dir, file_name="all_results.json", met
             results[f"{metric_key_prefix}_{key}"] = results.pop(key)
     with open(os.path.join(output_dir, file_name), "w") as f:
         json.dump(results, f, indent=4)
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="Fine-tune a BoolQ classifier with SCENE-style augmentation")
-
-    # --- data / model -----------------------------------------------------------
-    parser.add_argument("--model_name_or_path", type=str, required=True,
-                         help="e.g. shahrukhx01/roberta-base-boolq, or roberta-base to train from scratch on BoolQ.")
-    parser.add_argument("--dataset_name", type=str, default="google/boolq")
-    parser.add_argument("--dataset_config_name", type=str, default=None)
-    parser.add_argument("--max_seq_length", type=int, default=256)
-    parser.add_argument("--doc_stride", type=int, default=128)
-    parser.add_argument("--pad_to_max_length", action="store_true")
-    parser.add_argument("--preprocessing_num_workers", type=int, default=4)
-    parser.add_argument("--overwrite_cache", action="store_true")
-    parser.add_argument("--max_train_samples", type=int, default=None)
-    parser.add_argument("--max_eval_samples", type=int, default=None)
-
-    # --- optimization ------------------------------------------------------------
-    parser.add_argument("--per_device_train_batch_size", type=int, default=16)
-    parser.add_argument("--per_device_eval_batch_size", type=int, default=16)
-    parser.add_argument("--learning_rate", type=float, default=1e-5)
-    parser.add_argument("--weight_decay", type=float, default=0.01)
-    parser.add_argument("--num_train_epochs", type=int, default=10)
-    parser.add_argument("--max_train_steps", type=int, default=None)
-    parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
-    parser.add_argument("--lr_scheduler_type", type=SchedulerType, default="linear",
-                         choices=["linear", "cosine", "cosine_with_restarts", "polynomial",
-                                  "constant", "constant_with_warmup"])
-    parser.add_argument("--num_warmup_steps", type=int, default=0)
-    parser.add_argument("--custom_warmup_steps", type=int, default=0,
-                         help="Steps (within epoch 0) to skip SCENE augmentation, matching train.py.")
-    parser.add_argument("--seed", type=int, default=None)
-
-    # --- SCENE augmentation --------------------------------------------------------
-    parser.add_argument("--mask_strategy", type=str, choices=list(MASK_STRATEGIES), default="pos")
-    parser.add_argument("--num_perturbation_examples_per_batch", type=int, default=1,
-                         help="0 disables SCENE augmentation entirely (plain fine-tuning).")
-    parser.add_argument("--weight_perturb", type=float, default=1.0,
-                         help="Loss weight for meaning-changing (counterfactual) perturbations.")
-    parser.add_argument("--weight_permute", type=float, default=1.0,
-                         help="Loss weight for meaning-preserving (paraphrase/robustness) perturbations.")
-    parser.add_argument("--num_permutation_examples_per_batch", type=int, default=1,
-                         help="0 disables the passage-permutation augmentation (calculate_and_backward_permute_loss).")
-    parser.add_argument("--ner_labels", nargs="+",
-                         default=["PERSON", "ORG", "GPE", "LOC", "DATE", "TIME", "QUANTITY", "ORDINAL", "CARDINAL"])
-    parser.add_argument("--pos_tags", nargs="+", default=["NOUN", "PROPN", "VERB", "ADJ", "NUM"])
-
-    # --- output / checkpointing ----------------------------------------------------
-    parser.add_argument("--output_dir", type=str, required=True)
-    parser.add_argument("--checkpointing_steps", type=str, default=None,
-                         help="Integer, or 'epoch'.")
-
-    return parser.parse_args()
 
 
 
@@ -228,11 +174,11 @@ def main():
                         model, perturbed_batch, pseudo_labels, keep_mask, accelerator, args, logger,
                     )
 
-                if args.num_permutation_examples_per_batch > 0 and args.weight_permute > 0:
-                    for _ in range(args.num_permutation_examples_per_batch):
-                        calculate_and_backward_permute_loss(
-                            model, batch, tokenizer, accelerator, args, max_seq_length, logger,
-                        )
+                    if args.num_permutation_examples_per_batch > 0 and args.weight_permute > 0:
+                        for _ in range(args.num_permutation_examples_per_batch):
+                            calculate_and_backward_permute_loss(
+                                model, batch, tokenizer, accelerator, args, max_seq_length, logger,
+                            )
 
                 optimizer.step()
                 lr_scheduler.step()
