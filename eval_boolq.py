@@ -133,7 +133,7 @@ def main():
     accelerator.wait_for_everyone()
 
     logger.info(f"Loading BoolQ classifier {args.model_name_or_path}...")
-    config = AutoConfig.from_pretrained(args.model_name_or_path, force_download=True)
+    config = AutoConfig.from_pretrained(args.model_name_or_path)
     if config.num_labels != NUM_LABELS:
         logger.warning(
             f"Checkpoint has {config.num_labels} labels but BoolQ3L needs {NUM_LABELS} "
