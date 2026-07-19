@@ -146,9 +146,9 @@ def main():
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
     args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
 
-    checkpointing_steps = args.checkpointing_steps
-    if checkpointing_steps is not None and checkpointing_steps.isdigit():
-        checkpointing_steps = int(checkpointing_steps)
+    # checkpointing_steps = args.checkpointing_steps
+    # if checkpointing_steps is not None and checkpointing_steps.isdigit():
+    #     checkpointing_steps = int(checkpointing_steps)
 
     progress_bar = tqdm(range(args.max_train_steps), disable=not accelerator.is_local_main_process)
     completed_steps = 0
@@ -198,14 +198,14 @@ def main():
                 progress_bar.update(1)
                 completed_steps += 1
 
-            if isinstance(checkpointing_steps, int) and completed_steps % checkpointing_steps == 0:
-                accelerator.save_state(os.path.join(args.output_dir, f"step_{completed_steps}"))
+            # if isinstance(checkpointing_steps, int) and completed_steps % checkpointing_steps == 0:
+            #     accelerator.save_state(os.path.join(args.output_dir, f"step_{completed_steps}"))
 
             if completed_steps >= args.max_train_steps:
                 break
 
-        if args.checkpointing_steps == "epoch":
-            accelerator.save_state(os.path.join(args.output_dir, f"epoch_{epoch}"))
+        # if args.checkpointing_steps == "epoch":
+        #     accelerator.save_state(os.path.join(args.output_dir, f"epoch_{epoch}"))
 
     # -------------------------------------------------------------------------
     # Final validation + save
