@@ -31,7 +31,7 @@ import argparse
 import json
 import logging
 import os
-
+from collections import defaultdict
 import numpy as np
 import torch
 import datasets
@@ -66,11 +66,14 @@ def per_label_metrics(preds, refs):
     """Precision / recall / F1 / support for each of the three labels."""
     metrics = {}
     macro_f1 = []
+
     for label_id in sorted(ID2LABEL):
         tp = int(np.sum((preds == label_id) & (refs == label_id)))
         fp = int(np.sum((preds == label_id) & (refs != label_id)))
         fn = int(np.sum((preds != label_id) & (refs == label_id)))
+
         support = int(np.sum(refs == label_id))
+
         precision = tp / (tp + fp) if (tp + fp) else 0.0
         recall = tp / (tp + fn) if (tp + fn) else 0.0
         f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
@@ -88,6 +91,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate a saved BoolQ classifier checkpoint on BoolQ3L")
     parser.add_argument("--model_name_or_path", type=str, required=True,
                         help="Path to saved checkpoint or HuggingFace model identifier.")
+    parser.add_argument("--mask_strategy", type=str, required=True,
+                        choices=['random', 'loss', 'pos', 'ner'],
+                        help=f"Masking strategy (choices: {', '.join(['random', 'loss', 'pos', 'ner'])})")
     parser.add_argument("--split", type=str, default="dev", choices=[*SPLIT_FILES, "all"],
                         help="Which BoolQ3L split to evaluate: dev | train | all "
                              "(default: dev). 'all' concatenates every split.")
@@ -132,99 +138,128 @@ def main():
         os.makedirs(output_dir, exist_ok=True)
     accelerator.wait_for_everyone()
 
-    logger.info(f"Loading BoolQ classifier {args.model_name_or_path}...")
-    config = AutoConfig.from_pretrained(args.model_name_or_path)
-    if config.num_labels != NUM_LABELS:
-        logger.warning(
-            f"Checkpoint has {config.num_labels} labels but BoolQ3L needs {NUM_LABELS} "
-            f"(NO / YES / NO ANSWER); the IDK class may not be predictable."
-        )
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, use_fast=True)
-    model = AutoModelForSequenceClassification.from_pretrained(args.model_name_or_path, config=config)
-
     # --- load BoolQ3L (3-label) eval set ---
     eval_examples = load_boolq3l_all() if args.split == "all" else load_boolq3l(args.split)
     if args.max_eval_samples is not None:
         eval_examples = eval_examples.select(range(args.max_eval_samples))
 
-    max_seq_length = min(args.max_seq_length, tokenizer.model_max_length)
+    merged_metrics_dict = defaultdict(lambda: defaultdict(list))
+    accuracies = []
+    checkpoints_parent_dir = os.path.join("boolq_scripts", args.mask_strategy)
 
-    def _prepare(examples):
-        tokenized = tokenizer(
-            examples["question"],
-            examples["passage"],
-            truncation="only_second",
-            max_length=max_seq_length,
-            padding="max_length" if args.pad_to_max_length else False,
+    for model_seed in [model_seed for model_seed in os.listdir(os.path.join(checkpoints_parent_dir, "checkpoints", "boolq")) if args.model_name_or_path in model_seed]:
+        logger.info(f"Evaluating model checkpoint: {model_seed}")
+        model_seed_path = os.path.join(checkpoints_parent_dir, "checkpoints", "boolq", model_seed)
+
+        config = AutoConfig.from_pretrained(model_seed_path)
+        if config.num_labels != NUM_LABELS:
+            logger.warning(
+                f"Checkpoint has {config.num_labels} labels but BoolQ3L needs {NUM_LABELS} "
+                f"(NO / YES / NO ANSWER); the IDK class may not be predictable."
+            )
+
+        tokenizer = AutoTokenizer.from_pretrained(model_seed_path, use_fast=True)
+        model = AutoModelForSequenceClassification.from_pretrained(model_seed_path, config=config)
+        max_seq_length = min(args.max_seq_length, tokenizer.model_max_length)
+
+        def _prepare(examples):
+            tokenized = tokenizer(
+                examples["question"],
+                examples["passage"],
+                truncation="only_second",
+                max_length=max_seq_length,
+                padding="max_length" if args.pad_to_max_length else False,
+            )
+            tokenized["labels"] = examples["label"]
+            return tokenized
+
+        with accelerator.main_process_first():
+            eval_dataset = eval_examples.map(
+                _prepare,
+                batched=True,
+                num_proc=args.preprocessing_num_workers,
+                remove_columns=eval_examples.column_names,
+                load_from_cache_file=not args.overwrite_cache,
+                desc="Tokenizing BoolQ3L eval split",
+            )
+
+        if args.pad_to_max_length:
+            data_collator = default_data_collator
+        else:
+            data_collator = DataCollatorWithPadding(tokenizer, pad_to_multiple_of=(8 if accelerator.use_fp16 else None))
+
+        eval_dataloader = DataLoader(
+            eval_dataset, collate_fn=data_collator, batch_size=args.per_device_eval_batch_size
         )
-        tokenized["labels"] = examples["label"]
-        return tokenized
 
-    with accelerator.main_process_first():
-        eval_dataset = eval_examples.map(
-            _prepare,
-            batched=True,
-            num_proc=args.preprocessing_num_workers,
-            remove_columns=eval_examples.column_names,
-            load_from_cache_file=not args.overwrite_cache,
-            desc="Tokenizing BoolQ3L eval split",
-        )
+        model, eval_dataloader = accelerator.prepare(model, eval_dataloader)
 
-    if args.pad_to_max_length:
-        data_collator = default_data_collator
-    else:
-        data_collator = DataCollatorWithPadding(tokenizer, pad_to_multiple_of=(8 if accelerator.use_fp16 else None))
+        logger.info("***** Running Evaluation *****")
+        logger.info(f"  Num examples = {len(eval_dataset)}")
+        logger.info(f"  Batch size = {args.per_device_eval_batch_size}")
 
-    eval_dataloader = DataLoader(
-        eval_dataset, collate_fn=data_collator, batch_size=args.per_device_eval_batch_size
-    )
+        # --- eval loop (same shape as train_boolq_base.py) ---
+        model.eval()
+        all_preds, all_refs = [], []
+        for batch in eval_dataloader:
+            with torch.no_grad():
+                outputs = model(**batch)
+            preds = outputs.logits.argmax(dim=-1)
+            preds, refs = accelerator.gather_for_metrics((preds, batch["labels"]))
+            all_preds.append(preds.cpu().numpy())
+            all_refs.append(refs.cpu().numpy())
 
-    model, eval_dataloader = accelerator.prepare(model, eval_dataloader)
+        all_preds = np.concatenate(all_preds)
+        all_refs = np.concatenate(all_refs)
 
-    logger.info("***** Running Evaluation *****")
-    logger.info(f"  Num examples = {len(eval_dataset)}")
-    logger.info(f"  Batch size = {args.per_device_eval_batch_size}")
+        label_metrics, macro_f1 = per_label_metrics(all_preds, all_refs)
 
-    # --- eval loop (same shape as train_boolq_base.py) ---
-    model.eval()
-    all_preds, all_refs = [], []
-    for batch in eval_dataloader:
-        with torch.no_grad():
-            outputs = model(**batch)
-        preds = outputs.logits.argmax(dim=-1)
-        preds, refs = accelerator.gather_for_metrics((preds, batch["labels"]))
-        all_preds.append(preds.cpu().numpy())
-        all_refs.append(refs.cpu().numpy())
+        # the actual formula for the paper's accuracy turns out to be a two-level average of the recalls:
+        # (not a simple flat mean over the three classes)
+        # accuracy = ( (recall_yes + recall_no) / 2 + recall_idk) / 2
+        mean_positive_recall = (label_metrics["YES"]["recall"] + label_metrics["NO"]["recall"]) / 2
+        accuracy = (mean_positive_recall + label_metrics["NO ANSWER"]["recall"]) / 2
 
-    all_preds = np.concatenate(all_preds)
-    all_refs = np.concatenate(all_refs)
+        def _dist(arr):
+            return {ID2LABEL[i]: int(np.sum(arr == i)) for i in sorted(ID2LABEL)}
 
-    accuracy = float(np.mean(all_preds == all_refs))
-    label_metrics, macro_f1 = per_label_metrics(all_preds, all_refs)
+        results = {
+            "accuracy": accuracy,
+            "f1_macro": macro_f1,
+            "num_examples": int(len(all_refs)),
+            "per_label": label_metrics,
+            "gold_distribution": _dist(all_refs),
+            "prediction_distribution": _dist(all_preds),
+        }
 
-    def _dist(arr):
-        return {ID2LABEL[i]: int(np.sum(arr == i)) for i in sorted(ID2LABEL)}
+        accuracies.append(accuracy)
 
-    results = {
-        "accuracy": accuracy,
-        "f1_macro": macro_f1,
-        "num_examples": int(len(all_refs)),
-        "per_label": label_metrics,
-        "gold_distribution": _dist(all_refs),
-        "prediction_distribution": _dist(all_preds),
-    }
+        for label, metrics in label_metrics.items():
+            for metric, value in metrics.items():
+                if metric in ["recall", "precision"]:
+                    merged_metrics_dict[label][metric].append(value)
+
+        if accelerator.is_main_process:
+            logger.info(f"Results for checkpoint {model_seed}:")
+            logger.info(json.dumps(results, indent=4))
+
+            # predictions = [
+            #     {"id": eid, "prediction": ID2LABEL[int(p)], "gold": ID2LABEL[int(r)]}
+            #     for eid, p, r in zip(eval_examples["id"], all_preds, all_refs)
+            # ]
+            # with open(os.path.join(output_dir, "predictions.json"), "w") as f:
+            #     json.dump(predictions, f, indent=4)
+            #
+            # save_prefixed_metrics(dict(results), output_dir)
 
     if accelerator.is_main_process:
-        logger.info(json.dumps(results, indent=4))
-
-        predictions = [
-            {"id": eid, "prediction": ID2LABEL[int(p)], "gold": ID2LABEL[int(r)]}
-            for eid, p, r in zip(eval_examples["id"], all_preds, all_refs)
-        ]
-        with open(os.path.join(output_dir, "predictions.json"), "w") as f:
-            json.dump(predictions, f, indent=4)
-
-        save_prefixed_metrics(dict(results), output_dir)
+        # Average metrics across seeds
+        logger.info("Averaged metrics across all evaluated checkpoints:")
+        for label, metrics in merged_metrics_dict.items():
+            averaged_metrics = {key: (np.mean(values), np.std(values)) for key, values in metrics.items()}
+            logger.info(f"Metrics for label: {label}")
+            logger.info(json.dumps(averaged_metrics, indent=4))
+        # save_prefixed_metrics(averaged_metrics, output_dir)
 
 
 if __name__ == "__main__":
