@@ -1,17 +1,17 @@
 #!/bin/bash
 
 NUM_PERT=${NUM_PERT:-1}
-NUM_PERM=${NUM_PERM:-0}
+NUM_PERM=${NUM_PERM:-1}
 
 WEIGHT_PERT=${WEIGHT_PERT:-1.0}
-WEIGHT_PERM=${WEIGHT_PERM:-0.0}
+WEIGHT_PERM=${WEIGHT_PERM:-1.0}
 
 EPOCHS=10
 DATASET_NAME=google/boolq
 MODEL_NAME=EyalMaor/roberta-base-boolq-idk
 
 MASK_STRATEGY=random
-SEED=${SEED:-52}
+SEED=${SEED:-72}
 
 OUTPUT_DIR=./checkpoints/boolq/random_pert${NUM_PERT}_perm${NUM_PERM}_epoch${EPOCHS}_seed${SEED}
 
