@@ -25,7 +25,6 @@ import json
 import logging
 import math
 import os
-
 import datasets
 import evaluate
 import torch
@@ -43,6 +42,7 @@ from mask_strategies_boolq import (
 )
 from perturb_boolq import evaluate_and_filter_perturbations_boolq
 from args import parse_args
+from labels_boolq import LABEL2ID
 from optimization_boolq import create_optimizer_and_scheduler_boolq, calculate_and_backward_perturb_loss_boolq, calculate_and_backward_permute_loss
 
 logger = get_logger(__name__)
@@ -187,7 +187,7 @@ def main():
                     if args.num_permutation_examples_per_batch > 0 and args.weight_permute > 0:
                         for _ in range(args.num_permutation_examples_per_batch):
                             calculate_and_backward_permute_loss(
-                                model, batch, tokenizer, accelerator, args, max_seq_length, logger,
+                                model, batch, tokenizer, accelerator, args, max_seq_length, logger, LABEL2ID["NO ANSWER"]
                             )
 
                 optimizer.step()
@@ -215,6 +215,7 @@ def main():
     #     logger.info(json.dumps(eval_metric, indent=4))
 
     accelerator.wait_for_everyone()
+    logger.info("Saving model and tokenizer to %s", args.output_dir)
     unwrapped_model = accelerator.unwrap_model(model)
     unwrapped_model.save_pretrained(args.output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save)
     if accelerator.is_main_process:
