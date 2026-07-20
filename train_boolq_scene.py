@@ -210,16 +210,16 @@ def main():
     # -------------------------------------------------------------------------
     # Final validation + save
     # -------------------------------------------------------------------------
-    eval_metric = run_eval(model, eval_dataloader, accelerator)
-    if accelerator.is_main_process:
-        logger.info(json.dumps(eval_metric, indent=4))
+    # eval_metric = run_eval(model, eval_dataloader, accelerator)
+    # if accelerator.is_main_process:
+    #     logger.info(json.dumps(eval_metric, indent=4))
 
     accelerator.wait_for_everyone()
     unwrapped_model = accelerator.unwrap_model(model)
     unwrapped_model.save_pretrained(args.output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save)
     if accelerator.is_main_process:
         tokenizer.save_pretrained(args.output_dir)
-        save_prefixed_metrics(eval_metric, args.output_dir)
+        # save_prefixed_metrics(eval_metric, args.output_dir)
 
 
 if __name__ == "__main__":
