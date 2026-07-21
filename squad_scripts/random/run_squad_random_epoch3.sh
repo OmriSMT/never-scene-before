@@ -12,15 +12,13 @@ EPOCHS=3
 DATASET=squad
 MODEL_NAME=csarron/roberta-base-squad-v1
 
-MASK_STRATEGY=random
-SEED=${SEED:-42}
-CONFIG_NAME=${CONFIG_NAME:-"full_pipeline"}
+MASK_STRATEGY=new_random
+SEED=${SEED:-62}
 
-OUTPUT_DIR=./checkpoints/${DATASET}/random_${CONFIG_NAME}_epoch3_seed${SEED}
+OUTPUT_DIR=./checkpoints/${DATASET}/new_random_pert${NUM_PERT}_perm${NUM_PERM}_retr${NUM_RETV}_epoch3_seed${SEED}
 
 echo "MASK_STRATEGY=${MASK_STRATEGY}"
 echo "SEED=${SEED}"
-echo "CONFIG_NAME=${CONFIG_NAME}"
 echo "NUM_PERT=${NUM_PERT}"
 echo "NUM_PERM=${NUM_PERM}"
 echo "NUM_RETV=${NUM_RETV}"
@@ -51,6 +49,8 @@ accelerate launch ../../train.py \
   --weight_perturb ${WEIGHT_PERT} \
   --weight_permute ${WEIGHT_PERM} \
   --weight_retrieval ${WEIGHT_RETV} \
+  --retrieval_data_path ../../data/train-w-ret.csv \
+  --retrieval_context_title_path ../../data/train_documents.csv \
   --remove_no_answer \
   --use_paraphrase_detector \
   --output_dir ${OUTPUT_DIR}

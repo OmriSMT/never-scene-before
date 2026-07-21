@@ -203,3 +203,76 @@ def evaluate_and_filter_perturbations_boolq(
                     f"of {gt.numel()} candidates")
 
     return perturbed_batch, pseudo_labels, keep_mask, info
+
+
+def produce_idk_batch_boolq(batch, tokenizer, args, max_seq_length, idk_label_id, logger, logging=False):
+    """
+    BoolQ counterpart of perturb.py's produce_no_answer_batch.
+
+    Builds a shuffled (question, passage) batch by randomly re-pairing
+    passages within the batch, and hardcodes the IDK label for every
+    example whose passage actually changed (sigma(k) != k) -- matching
+    QA's hardcoded position-0 (CLS/no-answer) label for the same case.
+    Examples that landed on themselves (sigma(k) == k) get excluded via
+    changed_mask, matching the paper's Shuffle rule: "we discard the
+    example (since it is already present in the original batch)".
+
+    On tokenization failure, falls back to a valid (unchanged) batch with
+    an all-zero mask rather than raising -- mirrors QA's try/except
+    fallback, and keeps the caller's forward+backward call count
+    invariant across steps, which matters once training is distributed.
+
+    Args:
+        batch: dict with input_ids/attention_mask/labels, tokenized as
+               tokenizer(question, passage, ...)
+        tokenizer: the BoolQ classifier's tokenizer
+        args: parsed argument namespace (needs args.doc_stride,
+              args.pad_to_max_length)
+        max_seq_length: effective max sequence length
+        idk_label_id: int, the class index representing "IDK"
+        logger: logger instance
+        logging: if True, log each (question, permuted passage, IDK?) pair
+
+    Returns:
+        permuted_batch: dict of input_ids/attention_mask
+        pseudo_labels: LongTensor[batch], constant idk_label_id
+        changed_mask: FloatTensor[batch], 1.0 for re-paired examples, else 0.0
+    """
+    device = batch["input_ids"].device
+    batch_size = batch["input_ids"].shape[0]
+
+    ids = torch.arange(batch_size)
+    perm_ids = torch.randperm(batch_size)
+    changed_mask = (ids != perm_ids).float().to(device)
+    pseudo_labels = torch.full((batch_size,), idk_label_id, dtype=torch.long, device=device)
+
+    cls_token = tokenizer.cls_token
+    sep_token = tokenizer.sep_token
+    original = tokenizer.batch_decode(batch["input_ids"])
+    questions = [list(filter(None, x.split(sep_token)))[0].split(cls_token)[1].lstrip().rstrip() for x in original]
+    passages = [list(filter(None, x.split(sep_token)))[1].split(sep_token)[0].lstrip().rstrip() for x in original]
+    permuted_passages = [passages[i] for i in perm_ids.tolist()]
+
+    if logging:
+        for q, p, changed in zip(questions, permuted_passages, changed_mask.tolist()):
+            logger.info("----Permutation Pairs----")
+            logger.info(f"Question: {q}")
+            logger.info(f"Passage:  {p}")
+            logger.info(f"IDK:      {bool(changed)}")
+
+    try:
+        tokenized = tokenizer(
+            questions,
+            permuted_passages,
+            truncation="only_second",
+            max_length=max_seq_length,
+            stride=args.doc_stride,
+            padding="max_length" if args.pad_to_max_length else True,
+            return_tensors="pt",
+        ).to(device)
+        permuted_batch = {"input_ids": tokenized["input_ids"], "attention_mask": tokenized["attention_mask"]}
+        return permuted_batch, pseudo_labels, changed_mask
+    except Exception:
+        logger.info("Failed Permutation")
+        permuted_batch = {"input_ids": batch["input_ids"], "attention_mask": batch["attention_mask"]}
+        return permuted_batch, pseudo_labels, torch.zeros_like(changed_mask)

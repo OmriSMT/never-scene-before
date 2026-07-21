@@ -11,7 +11,7 @@ DATASET_NAME=google/boolq
 MODEL_NAME=EyalMaor/roberta-base-boolq-idk
 
 MASK_STRATEGY=random
-SEED=${SEED:-72}
+SEED=${SEED:-62}
 
 OUTPUT_DIR=./checkpoints/boolq/random_pert${NUM_PERT}_perm${NUM_PERM}_epoch${EPOCHS}_seed${SEED}
 
@@ -43,6 +43,4 @@ accelerate launch ../../train_boolq_scene.py \
   --weight_perturb ${WEIGHT_PERT} \
   --weight_permute ${WEIGHT_PERM} \
   --checkpointing_steps epoch \
-  --remove_no_answer \
-  --use_paraphrase_detector \
   --output_dir ${OUTPUT_DIR}

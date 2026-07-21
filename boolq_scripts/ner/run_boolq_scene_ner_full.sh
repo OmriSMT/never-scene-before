@@ -12,13 +12,11 @@ MODEL_NAME=EyalMaor/roberta-base-boolq-idk
 
 MASK_STRATEGY=ner
 SEED=${SEED:-42}
-CONFIG_NAME=${CONFIG_NAME:-"full_pipeline"}
 
 OUTPUT_DIR=./checkpoints/boolq/ner_pert${NUM_PERT}_perm${NUM_PERM}_epoch${EPOCHS}_seed${SEED}
 
 echo "MASK_STRATEGY=${MASK_STRATEGY}"
 echo "SEED=${SEED}"
-echo "CONFIG_NAME=${CONFIG_NAME}"
 echo "NUM_PERT=${NUM_PERT}"
 echo "NUM_PERM=${NUM_PERM}"
 echo "MODEL_NAME=${MODEL_NAME}"
@@ -45,6 +43,4 @@ accelerate launch train_boolq_scene.py \
   --weight_perturb ${WEIGHT_PERT} \
   --weight_permute ${WEIGHT_PERM} \
   --checkpointing_steps epoch \
-  --remove_no_answer \
-  --use_paraphrase_detector \
   --output_dir ${OUTPUT_DIR}

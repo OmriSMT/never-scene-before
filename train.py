@@ -58,7 +58,7 @@ from perturb import evaluate_and_filter_perturbations
 from optimization import (create_optimizers_and_scheduler, calculate_and_backward_retrieval_loss,
                           calculate_and_backward_permute_loss, calculate_and_backward_perturb_loss)
 from eval_utils import run_evaluation
-from mask_strategies import RandomMaskStrategy, LossMaskStrategy, NERMaskStrategy, POSMaskStrategy
+from mask_strategies import RandomMaskStrategy, LossMaskStrategy, NERMaskStrategy, POSMaskStrategy, NewRandomMaskStrategy
 
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
@@ -73,6 +73,7 @@ MASK_STRATEGIES = {
     "loss": LossMaskStrategy,
     "ner": NERMaskStrategy,
     "pos": POSMaskStrategy,
+    "new_random": NewRandomMaskStrategy,
 }
 
 
@@ -278,7 +279,7 @@ def main():
         logger.info(f"POS labels used for masking: {args.pos_tags}")
     else:
         mask_strategy = strategy()
-        logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
+        logger.info(f"Using {args.mask_strategy}: {strategy} mask strategy for perturbation.")
 
     generator.eval()
     paraphrase_classifier.eval()

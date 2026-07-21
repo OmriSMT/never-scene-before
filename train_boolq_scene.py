@@ -25,7 +25,6 @@ import json
 import logging
 import math
 import os
-
 import datasets
 import evaluate
 import torch
@@ -39,10 +38,11 @@ from tqdm.auto import tqdm
 from models_boolq import load_models_boolq
 from dataloading_boolq import load_boolq_datasets, preprocess_boolq, build_dataloaders_boolq
 from mask_strategies_boolq import (
-    RandomMaskStrategy, POSMaskStrategy, NERMaskStrategy, ClassificationLossMaskStrategy,
+    RandomMaskStrategy, POSMaskStrategy, NERMaskStrategy, ClassificationLossMaskStrategy, NewRandomMaskStrategy
 )
 from perturb_boolq import evaluate_and_filter_perturbations_boolq
 from args import parse_args
+from labels_boolq import LABEL2ID
 from optimization_boolq import create_optimizer_and_scheduler_boolq, calculate_and_backward_perturb_loss_boolq, calculate_and_backward_permute_loss
 
 logger = get_logger(__name__)
@@ -52,6 +52,7 @@ MASK_STRATEGIES = {
     "loss": ClassificationLossMaskStrategy,
     "ner": NERMaskStrategy,
     "pos": POSMaskStrategy,
+    "new_random": NewRandomMaskStrategy,
 }
 
 
@@ -131,7 +132,7 @@ def main():
         logger.info(f"POS labels used for masking: {args.pos_tags}")
     else:
         mask_strategy = strategy_cls()
-        logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
+        logger.info(f"Using {args.mask_strategy}: {strategy} mask strategy for perturbation.")
 
     # -------------------------------------------------------------------------
     # Optimizer / scheduler / accelerate prepare
@@ -187,7 +188,7 @@ def main():
                     if args.num_permutation_examples_per_batch > 0 and args.weight_permute > 0:
                         for _ in range(args.num_permutation_examples_per_batch):
                             calculate_and_backward_permute_loss(
-                                model, batch, tokenizer, accelerator, args, max_seq_length, logger,
+                                model, batch, tokenizer, accelerator, args, max_seq_length, logger, LABEL2ID["NO ANSWER"]
                             )
 
                 optimizer.step()
@@ -215,6 +216,7 @@ def main():
     #     logger.info(json.dumps(eval_metric, indent=4))
 
     accelerator.wait_for_everyone()
+    logger.info("Saving model and tokenizer to %s", args.output_dir)
     unwrapped_model = accelerator.unwrap_model(model)
     unwrapped_model.save_pretrained(args.output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save)
     if accelerator.is_main_process:

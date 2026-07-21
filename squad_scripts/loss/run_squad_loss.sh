@@ -37,6 +37,8 @@ accelerate launch ../../train.py \
   --weight_perturb ${WEIGHT_PERT} \
   --weight_permute ${WEIGHT_PERM} \
   --weight_retrieval ${WEIGHT_RETV} \
+  --retrieval_data_path ../../data/train-w-ret.csv \
+  --retrieval_context_title_path ../../data/train_documents.csv \
   --remove_no_answer \
   --use_paraphrase_detector \
   --output_dir ${OUTPUT_DIR}

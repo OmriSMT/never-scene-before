@@ -42,6 +42,11 @@ class ClassificationLossMaskStrategy(MaskStrategy):
         words = [w for w in words if w]
         length = len(words)
         k = int(length * self._batch_prob)
+        mask = torch.zeros(1, length, dtype=torch.bool)
+
+        if k <= 0:
+            # for efficiency, if k=0 we don't need to compute any losses, just return the empty mask
+            return mask
 
         loss_deltas = []
         label_t = torch.tensor([label], device=device)
@@ -67,7 +72,6 @@ class ClassificationLossMaskStrategy(MaskStrategy):
         loss_deltas.sort(key=lambda x: x[1], reverse=True)
         top_indices = {idx for idx, _ in loss_deltas[:k]}
 
-        mask = torch.zeros(1, length, dtype=torch.bool)
         for i in top_indices:
             mask[0, i] = True
         return mask

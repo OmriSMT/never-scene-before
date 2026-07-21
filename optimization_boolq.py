@@ -1,10 +1,9 @@
 import math
-
 import torch
 from transformers import get_scheduler
-from accelerate import Accelerator
-import logging
-import argparse
+
+from perturb_boolq import produce_idk_batch_boolq
+
 
 
 def create_optimizer_and_scheduler_boolq(model, args, train_dataloader):
@@ -60,51 +59,39 @@ def calculate_and_backward_perturb_loss_boolq(model, perturbed_batch, pseudo_lab
     logger.info(f"perturbed loss: {p_loss.detach().float()} (kept {int(keep_mask.sum().item())} examples)")
 
 
-def calculate_and_backward_permute_loss(model, batch, tokenizer, accelerator, args, max_seq_length, logger):
+def calculate_and_backward_permute_loss(
+        model, batch, tokenizer, accelerator, args, max_seq_length, logger, idk_label_id,
+):
     """
-    BoolQ counterpart of optimization.py's calculate_and_backward_permute_loss.
-    BoolQ has no "no answer" class to fall back on, so mismatched (question, permuted_passage) pairs
-    are instead self-labeled with the model's own current prediction on that new pairing 
-    which is the same self-labeling idea as the counterfactual at the og purtu 
-    Only entries whose passage actually changed (i.e. the permutation didn't map them back to themselves) contribute to the loss.
+    Args:
+        model: the BoolQ classifier (wrapped by accelerate)
+        batch: dict with input_ids/attention_mask/labels, tokenized as
+               tokenizer(question, passage, ...)
+        tokenizer: the BoolQ classifier's tokenizer
+        accelerator: Accelerator instance
+        args: parsed argument namespace (needs args.doc_stride,
+              args.pad_to_max_length, args.weight_permute,
+              args.num_permutation_examples_per_batch)
+        max_seq_length: effective max sequence length
+        logger: logger instance
+        idk_label_id: int, the class index representing "IDK" in the
+                      (now 3-way) classifier output. Pass this in from
+                      args (e.g. args.idk_label_id) rather than hardcoding
+                      it inline, since it depends on how the classifier
+                      head was constructed.
     """
-    device = batch["input_ids"].device
-    batch_size = batch["input_ids"].shape[0]
- 
-    ids = torch.arange(batch_size)
-    perm_ids = torch.randperm(batch_size)
-    changed_mask = (ids != perm_ids).float().to(device)
- 
-    cls_token = tokenizer.cls_token
-    sep_token = tokenizer.sep_token
-    original = tokenizer.batch_decode(batch["input_ids"])
-    questions = [list(filter(None, x.split(sep_token)))[0].split(cls_token)[1].lstrip().rstrip() for x in original]
-    passages = [list(filter(None, x.split(sep_token)))[1].split(sep_token)[0].lstrip().rstrip() for x in original]
-    permuted_passages = [passages[i] for i in perm_ids.tolist()]
- 
-    try:
-        tokenized = tokenizer(
-            questions,
-            permuted_passages,
-            truncation="only_second",
-            max_length=max_seq_length,
-            stride=args.doc_stride,
-            padding="max_length" if args.pad_to_max_length else True,
-            return_tensors="pt",
-        ).to(device)
-    except Exception:
-        logger.info("Failed permutation batch; skipping this step's permute loss")
-        return
- 
-    outputs = model(input_ids=tokenized["input_ids"], attention_mask=tokenized["attention_mask"])
-    with torch.no_grad():
-        pseudo_labels = outputs.logits.argmax(dim=-1)  # self-labeled, same trick as the SCENE branch
- 
+    permuted_batch, pseudo_labels, changed_mask = produce_idk_batch_boolq(
+        batch, tokenizer, args, max_seq_length, idk_label_id, logger,
+    )
+
+    outputs = model(input_ids=permuted_batch["input_ids"], attention_mask=permuted_batch["attention_mask"])
     loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
     per_example_loss = loss_fct(outputs.logits, pseudo_labels) * changed_mask
     denom = changed_mask.sum()
+    # Same zero-fallback pattern as QA: always backward(), never skip, so
+    # the number of backward() calls per step is invariant to batch content.
     loss = per_example_loss.sum() / denom if denom > 0 else 0.0 * per_example_loss.sum()
-    loss = loss * args.weight_permute / max(args.num_permutation_examples_per_batch, 1)
- 
+    loss = loss * args.weight_permute / args.num_permutation_examples_per_batch
+
     accelerator.backward(loss)
-    logger.info(f"permute loss: {loss.detach().float()} ({int(changed_mask.sum().item())} changed pairs)")
+    logger.info(f"permute (shuffle) loss: {loss.detach().float()} ({int(denom.item())} changed pairs)")

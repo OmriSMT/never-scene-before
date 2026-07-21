@@ -1,18 +1,32 @@
 #!/bin/bash
-#SBATCH --job-name=random_epoch3
-#SBATCH --partition=rtx6000
-#SBATCH --gres=gpu:rtx_6000:1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
-#SBATCH --time=24:00:00
-#SBATCH --output=logs/random_epoch3_%j.out
-#SBATCH --error=logs/random_epoch3_%j.err
 
-source $(conda info --base)/etc/profile.d/conda.sh
-conda activate never_scene
+################################################################################################
+### sbatch configuration parameters must start with #SBATCH and must precede any other commands.
+### To ignore, just add another # - like so: ##SBATCH
+################################################################################################
 
-echo "Node: $SLURM_JOB_NODELIST"
+#SBATCH --partition main			### specify partition name where to run a job. change only if you have a matching qos!! main: all nodes; gtx1080: 1080 gpu card nodes; rtx2080: 2080 nodes; teslap100: p100 nodes; titanrtx: titan nodes
+#SBATCH --time 0-14:00:00			### limit the time of job running. Make sure it is not greater than the partition time limit!! Format: D-H:MM:SS
+#SBATCH --job-name new_rand_all_seed62		### name of the job
+#SBATCH --output new_rand_all_seed62.out		### output log for running job - %J for job number
+#SBATCH --gpus=1				### number of GPUs, allocating more than 1 requires IT team's permission. Example to request 3090 gpu: #SBATCH --gpus=rtx_3090:1
+#SBATCH --constraint rtx_4090
+
+# Note: the following 4 lines are commented out
+#SBATCH --mail-user=user@post.bgu.ac.il	### user's email for sending job status messages
+#SBATCH --mail-type=ALL			### conditions for sending the email. ALL,BEGIN,END,FAIL, REQUEU, NONE
+##SBATCH --mem=48G				### amount of RAM memory, allocating more than 60G requires IT team's permission
+
+################  Following lines will be executed by a compute node    #######################
+
+### Print some data to output file ###
+echo `date`
+echo -e "\nSLURM_JOBID:\t\t" $SLURM_JOBID
+echo -e "SLURM_JOB_NODELIST:\t" $SLURM_JOB_NODELIST "\n\n"
 echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
 nvidia-smi
 
+### Start your code below ####
+module load anaconda
+source activate never_scene
 bash run_squad_random_epoch3.sh
