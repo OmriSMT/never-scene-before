@@ -38,7 +38,7 @@ from tqdm.auto import tqdm
 from models_boolq import load_models_boolq
 from dataloading_boolq import load_boolq_datasets, preprocess_boolq, build_dataloaders_boolq
 from mask_strategies_boolq import (
-    RandomMaskStrategy, POSMaskStrategy, NERMaskStrategy, ClassificationLossMaskStrategy,
+    RandomMaskStrategy, POSMaskStrategy, NERMaskStrategy, ClassificationLossMaskStrategy, NewRandomMaskStrategy
 )
 from perturb_boolq import evaluate_and_filter_perturbations_boolq
 from args import parse_args
@@ -52,6 +52,7 @@ MASK_STRATEGIES = {
     "loss": ClassificationLossMaskStrategy,
     "ner": NERMaskStrategy,
     "pos": POSMaskStrategy,
+    "new_random": NewRandomMaskStrategy,
 }
 
 
@@ -131,7 +132,7 @@ def main():
         logger.info(f"POS labels used for masking: {args.pos_tags}")
     else:
         mask_strategy = strategy_cls()
-        logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
+        logger.info(f"Using {args.mask_strategy}: {strategy} mask strategy for perturbation.")
 
     # -------------------------------------------------------------------------
     # Optimizer / scheduler / accelerate prepare

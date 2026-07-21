@@ -58,6 +58,23 @@ class RandomMaskStrategy(MaskStrategy):
         return mask
 
 
+class NewRandomMaskStrategy(MaskStrategy):
+    """
+    This fixed random does not mask tokens even if k=0, like in the original.
+    This is to be more consistent with the other strategies.
+    """
+    def __call__(self, words, **kwargs):
+        length = len(words)
+        k = int(length * self._batch_prob)
+
+        mask = torch.zeros(1, length, dtype=torch.bool)
+        if k > 0:
+            selected = np.random.choice(length, size=k, replace=False)
+            for idx in selected:
+                mask[0, idx] = True
+        return mask
+
+
 class LossMaskStrategy(MaskStrategy):
     """
     Mask the k words whose removal raises the QA loss the most
@@ -102,6 +119,11 @@ class LossMaskStrategy(MaskStrategy):
         length = len(words)
         # of what proportion the array is masked out
         k = int(length * self._batch_prob)
+        mask = torch.zeros(1, length, dtype=torch.bool)
+
+        if k <= 0 or length == 0:
+            # for efficiency, if k=0 we don't need to compute any losses, just return the empty mask
+            return mask
 
         loss_deltas = []
 
@@ -163,7 +185,6 @@ class LossMaskStrategy(MaskStrategy):
         loss_deltas.sort(key=lambda x: x[1], reverse=True)
         top_indices = {idx for idx, _ in loss_deltas[:k]}
 
-        mask = torch.zeros(1, length, dtype=torch.bool)
         for i in top_indices:
             mask[0, i] = True
         return mask
@@ -202,9 +223,12 @@ class NERMaskStrategy(MaskStrategy):
     def __call__(self, words, **kwargs):
         length = len(words)
         mask = torch.zeros(size=(1, length), dtype=torch.bool)
+        k = int(length * self._batch_prob)
 
-        if length == 0:
+        if k == 0 or length == 0:
+            # for efficiency, if k=0 we don't need to compute anything, just return the empty mask
             return mask
+
 
         doc = NERMaskStrategy._nlp(" ".join(words))
 
@@ -228,11 +252,9 @@ class NERMaskStrategy(MaskStrategy):
 
         candidates = sorted(set(candidates))
 
-        if len(candidates) == 0:
-            return mask
-
-        k = int(length * self._batch_prob)
         k = min(k, len(candidates)) # ensure k does not exceed number of candidates
+        if k == 0:
+            return mask
 
         selected = np.random.choice(candidates, size=k, replace=False)
 
@@ -274,12 +296,14 @@ class POSMaskStrategy(MaskStrategy):
 
         length = len(words)
         mask = torch.zeros(size=(1, length), dtype=torch.bool)
+        k = int(length * self._batch_prob)
+
+        if k == 0 or length == 0:
+            # for efficiency, if k=0 we don't need to compute anything, just return the empty mask
+            return mask
 
         if device is not None:
             mask = mask.to(device)
-
-        if length == 0:
-            return mask
 
         text = " ".join(words)
         doc = POSMaskStrategy._nlp(text)
@@ -303,13 +327,9 @@ class POSMaskStrategy(MaskStrategy):
 
         candidates = sorted(set(candidates))
 
-        if len(candidates) == 0:
-            return mask
-
         if self._batch_prob is None:
             self.sample_mask_proportion()
 
-        k = int(length * self._batch_prob)
         k = min(k, len(candidates))
 
         if k == 0:

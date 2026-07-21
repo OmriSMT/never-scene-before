@@ -254,7 +254,8 @@ def main():
 
     if accelerator.is_main_process:
         # Average metrics across seeds
-        logger.info("Averaged metrics across all evaluated checkpoints:")
+        logger.info(f"Averaged metrics across all evaluated checkpoints for {args.model_name_or_path}:")
+        logger.info(f"Average accuracy: {np.mean(accuracies):.4f} ± {np.std(accuracies):.4f}")
         for label, metrics in merged_metrics_dict.items():
             averaged_metrics = {key: (np.mean(values), np.std(values)) for key, values in metrics.items()}
             logger.info(f"Metrics for label: {label}")
