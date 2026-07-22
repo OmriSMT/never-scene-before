@@ -365,20 +365,20 @@ def main():
             if completed_steps >= args.max_train_steps:
                 break
 
-        if args.checkpointing_steps == "epoch":
-            output_dir = f"epoch_{epoch}"
-            if args.output_dir is not None:
-                output_dir = os.path.join(args.output_dir, output_dir)
-            accelerator.save_state(output_dir)
+        # if args.checkpointing_steps == "epoch":
+        #     output_dir = f"epoch_{epoch}"
+        #     if args.output_dir is not None:
+        #         output_dir = os.path.join(args.output_dir, output_dir)
+        #     accelerator.save_state(output_dir)
 
-        if args.push_to_hub and epoch < args.num_train_epochs - 1:
-            accelerator.wait_for_everyone()
-            unwrapped_model = accelerator.unwrap_model(model)
-            unwrapped_model.save_pretrained(
-                args.output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save
-            )
-            if accelerator.is_main_process:
-                tokenizer.save_pretrained(args.output_dir)
+        # if args.push_to_hub and epoch < args.num_train_epochs - 1:
+        #     accelerator.wait_for_everyone()
+        #     unwrapped_model = accelerator.unwrap_model(model)
+        #     unwrapped_model.save_pretrained(
+        #         args.output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save
+        #     )
+        #     if accelerator.is_main_process:
+        #         tokenizer.save_pretrained(args.output_dir)
                 # repo.push_to_hub(
                 #     commit_message=f"Training in progress epoch {epoch}", blocking=False, auto_lfs_prune=True
                 # )
@@ -392,7 +392,7 @@ def main():
     logger.info(f"  Num examples = {len(validation_dataset)}")
     logger.info(f"  Batch size = {args.per_device_eval_batch_size}")
 
-    val_metric = run_evaluation(model, validation_dataloader, validation_dataset, validation_examples, accelerator, metric, args, logger, answer_column_name, is_test=False)
+    val_metric = run_evaluation(model, validation_dataloader, validation_dataset, validation_examples, accelerator, metric, args, logger, answer_column_name, args.output_dir, is_test=False)
 
     # -------------------------------------------------------------------------
     # Test Evaluation
@@ -402,7 +402,7 @@ def main():
         logger.info(f"  Num examples = {len(test_dataset)}")
         logger.info(f"  Batch size = {args.per_device_eval_batch_size}")
 
-        test_metric = run_evaluation(model, test_dataloader, test_dataset, test_examples, accelerator, metric, args, logger, answer_column_name, is_test=True)
+        test_metric = run_evaluation(model, test_dataloader, test_dataset, test_examples, accelerator, metric, args, logger, answer_column_name, args.output_dir, is_test=True)
 
     if args.with_tracking:
         log = {
@@ -421,6 +421,7 @@ def main():
     # Save
     # -------------------------------------------------------------------------
     if args.output_dir is not None:
+        logger.info(f"Saving model checkpoint to {args.output_dir}")
         accelerator.wait_for_everyone()
         unwrapped_model = accelerator.unwrap_model(model)
         unwrapped_model.save_pretrained(

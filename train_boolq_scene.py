@@ -121,7 +121,7 @@ def main():
         raise Exception(f"Mask strategy {args.mask_strategy} is not supported.")
     elif args.mask_strategy == "loss":
         mask_strategy = strategy_cls(model, tokenizer, max_seq_length)
-        logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
+        logger.info(f"Using {args.mask_strategy}: {strategy_cls} mask strategy for perturbation.")
     elif args.mask_strategy == "ner":
         mask_strategy = strategy_cls(target_ents=args.ner_labels)
         logger.info(f"Using {args.mask_strategy} mask strategy for perturbation.")
@@ -132,7 +132,7 @@ def main():
         logger.info(f"POS labels used for masking: {args.pos_tags}")
     else:
         mask_strategy = strategy_cls()
-        logger.info(f"Using {args.mask_strategy}: {strategy} mask strategy for perturbation.")
+        logger.info(f"Using {args.mask_strategy}: {strategy_cls} mask strategy for perturbation.")
 
     # -------------------------------------------------------------------------
     # Optimizer / scheduler / accelerate prepare

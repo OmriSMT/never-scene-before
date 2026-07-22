@@ -12,7 +12,7 @@ sequence classification loss against the BoolQ label.
 """
 import torch
 
-from mask_strategies import MaskStrategy, RandomMaskStrategy, POSMaskStrategy, NERMaskStrategy  # noqa: F401
+from mask_strategies import MaskStrategy, RandomMaskStrategy, POSMaskStrategy, NERMaskStrategy, NewRandomMaskStrategy  # noqa: F401
 
 
 class ClassificationLossMaskStrategy(MaskStrategy):
@@ -33,9 +33,9 @@ class ClassificationLossMaskStrategy(MaskStrategy):
         self.max_seq_length = max_seq_length
         super().__init__(*args, **kwargs)
 
-    def __call__(self, words, passage=None, label=None, device=None, **kwargs):
-        if passage is None:
-            raise ValueError("ClassificationLossMaskStrategy requires `passage` kwarg")
+    def __call__(self, words, context=None, label=None, device=None, **kwargs):
+        if context is None:
+            raise ValueError("ClassificationLossMaskStrategy requires `context` kwarg")
         if label is None:
             raise ValueError("ClassificationLossMaskStrategy requires `label` kwarg")
 
@@ -59,7 +59,7 @@ class ClassificationLossMaskStrategy(MaskStrategy):
 
                 enc = self.tokenizer(
                     candidate_q,
-                    passage,
+                    context,
                     truncation="only_second",
                     max_length=self.max_seq_length,
                     return_tensors="pt",

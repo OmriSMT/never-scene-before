@@ -57,6 +57,9 @@ def parse_args():
                              "(default: all = the three slices concatenated).")
     parser.add_argument("--version_2_with_negative", action="store_true",
                         help="Use SQuAD v2 metric (with unanswerable questions).")
+    parser.add_argument("--mask_strategy", type=str, required=True,
+                        choices=['random', 'loss', 'pos', 'ner'],
+                        help=f"Masking strategy (choices: {', '.join(['random', 'loss', 'pos', 'ner'])})")
     parser.add_argument("--max_seq_length", type=int, default=384)
     parser.add_argument("--doc_stride", type=int, default=128)
     parser.add_argument("--pad_to_max_length", action="store_true")
@@ -118,10 +121,11 @@ def main():
         raw_datasets = load_dataset(args.dataset_name)
 
     merged_dict = defaultdict(list)
+    checkpoints_parent_dir = os.path.join("squad_scripts", args.mask_strategy)
 
-    for model_seed in [model_seed for model_seed in os.listdir(os.path.join("checkpoints", "squad")) if model_name_or_path in model_seed]:
+    for model_seed in [model_seed for model_seed in os.listdir(os.path.join(checkpoints_parent_dir, "checkpoints", "squad")) if model_name_or_path in model_seed]:
         logger.info(f"Evaluating model checkpoint: {model_seed}")
-        model_seed_path = os.path.join("checkpoints", "squad", model_seed)
+        model_seed_path = os.path.join(checkpoints_parent_dir, "checkpoints", "squad", model_seed)
         config = AutoConfig.from_pretrained(model_seed_path)
         tokenizer = AutoTokenizer.from_pretrained(model_seed_path, use_fast=True)
         model = AutoModelForQuestionAnswering.from_pretrained(model_seed_path, config=config)
@@ -191,9 +195,10 @@ def main():
 
     if accelerator.is_main_process:
         # Average metrics across seeds
+        logger.info(f"Averaged metrics across all evaluated checkpoints for {args.model_name_or_path}:")
         averaged_metrics = {key: (np.mean(values), np.std(values)) for key, values in merged_dict.items()}
         logger.info(json.dumps(averaged_metrics, indent=4))
-        save_prefixed_metrics(averaged_metrics, output_dir)
+        # save_prefixed_metrics(averaged_metrics, output_dir)
 
 
 if __name__ == "__main__":

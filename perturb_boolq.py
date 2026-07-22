@@ -62,19 +62,9 @@ def perturb_boolq(batch, tokenizer, generator_tokenizer, generator,
         contexts=passages,        # harmless extra kwarg for strategies that don't need it
         start_positions=None,
         end_positions=None,
+        labels=labels,            # harmless extra kwarg for strategies that don't need it
         device=device,
     )
-    # ClassificationLossMaskStrategy needs `passage`/`label` per example, which
-    # mask_questions() doesn't know how to pass through -- handle it directly.
-    if isinstance(mask_strategy, ClassificationLossMaskStrategy):
-        mask_strategy.sample_mask_proportion()
-        masked_batch = []
-        for q, p, y in zip(questions, passages, labels):
-            words = [w for w in q.split("?")[0].split(" ") if w]
-            mask = mask_strategy(words, passage=p, label=y, device=device)
-            words_arr = np.array([words], dtype=object)
-            words_arr[mask] = "<mask>"
-            masked_batch.append(" ".join(words_arr[0]) + "?")
 
     gen_input_ids = generator_tokenizer(
         masked_batch,

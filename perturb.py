@@ -28,7 +28,7 @@ import pandas as pd
 #     return masked_batch
 
 
-def mask_questions(questions, strategy, contexts=None, start_positions=None, end_positions=None, device=None):
+def mask_questions(questions, strategy, contexts=None, start_positions=None, end_positions=None, labels=None, device=None):
     """
     Mask a batch of questions with a given masking strategy.
     Args:
@@ -37,6 +37,7 @@ def mask_questions(questions, strategy, contexts=None, start_positions=None, end
         contexts:        optional list of context strings for strategies that require context
         start_positions: optional list of int start token positions
         end_positions:   optional list of int end token positions
+        labels:          optional list of int labels for strategies that require labels
         device:          torch device, passed through to the mask strategy
     
     Output:
@@ -52,6 +53,7 @@ def mask_questions(questions, strategy, contexts=None, start_positions=None, end
         if start_positions is not None: extra["start_position"] = start_positions[q_idx]
         if end_positions is not None: extra["end_position"] = end_positions[q_idx]
         if device is not None: extra["device"] = device
+        if labels is not None: extra["label"] = labels[q_idx]
 
         mask = strategy(words, **extra)
         question_splits_masked = np.array([words], dtype=object)
@@ -405,12 +407,12 @@ def evaluate_and_filter_perturbations(
 
                 answer_idx = 0
                 if mask[i] == 0:  # two sentences are paraphrase
-                    logger.info("Perturbation IS a paraphrase")
+                    # logger.info("Perturbation IS a paraphrase")
                     p_answer = p_answers[answer_idx]
 
                     if (m_answer == g_answer and  # model predicted correctly
                             g_answer == p_answer):  # perturbation didn't change the label
-                        logger.info("Robust example")
+                        # logger.info("Robust example")
                         mask[i] = 1  # Robust example, will be kept for training
 
                 else:
@@ -419,7 +421,7 @@ def evaluate_and_filter_perturbations(
                         p_answer = p_answers[j]
                         IoU = IoU_list[j]
                         if IoU < args.IoU_threshold:
-                            logger.info("Exists perturbation")
+                            # logger.info("Exists perturbation")
                             exists_good_p = True
                             answer_idx = j
                             break
@@ -434,17 +436,17 @@ def evaluate_and_filter_perturbations(
                 if (m_answer == g_answer and  # model predicted correctly
                         g_answer == p_answer and  # perturbation didn't change the label
                         success_perturb_i):  # perturbed question is a valid perturbation
-                    logger.info("Answer didn't change w.r.t. successful perturbation")
+                    # logger.info("Answer didn't change w.r.t. successful perturbation")
                     mask[i] = 1
 
                 if (tokenizer.cls_token in p_answer and  # perturbed prediction is the same as model prediction
                         tokenizer.cls_token in m_answer and  # both perturbed and orginal predictions are NoAns
                         tokenizer.cls_token not in g_answer):  # groundtruth has answer
-                    logger.info("NoAns prediction for both orginal and perturbed. Disregard.")
+                    # logger.info("NoAns prediction for both orginal and perturbed. Disregard.")
                     mask[i] = 0
 
                 if not success_perturb_i:
-                    logger.info("Unsuccessful perturbation. Disregard.")
+                    # logger.info("Unsuccessful perturbation. Disregard.")
                     mask[i] = 0
 
                 do_backprop = mask[

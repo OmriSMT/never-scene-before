@@ -1,6 +1,6 @@
 #!/bin/bash
 
-NUM_PERT=${NUM_PERT:-1}
+NUM_PERT=${NUM_PERT:-0}
 NUM_PERM=${NUM_PERM:-1}
 
 WEIGHT_PERT=${WEIGHT_PERT:-1.0}
@@ -11,7 +11,7 @@ DATASET_NAME=google/boolq
 MODEL_NAME=EyalMaor/roberta-base-boolq-idk
 
 MASK_STRATEGY=loss
-SEED=${SEED:-42}
+SEED=${SEED:-52}
 
 OUTPUT_DIR=./checkpoints/boolq/loss_pert${NUM_PERT}_perm${NUM_PERM}_epoch${EPOCHS}_seed${SEED}
 

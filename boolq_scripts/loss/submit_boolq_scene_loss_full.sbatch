@@ -7,15 +7,15 @@
 
 #SBATCH --partition main			### specify partition name where to run a job. change only if you have a matching qos!! main: all nodes; gtx1080: 1080 gpu card nodes; rtx2080: 2080 nodes; teslap100: p100 nodes; titanrtx: titan nodes
 #SBATCH --time 0-14:00:00			### limit the time of job running. Make sure it is not greater than the partition time limit!! Format: D-H:MM:SS
-#SBATCH --job-name boolq_loss_full_seed42		### name of the job
-#SBATCH --output boolq_loss_full_seed42.out		### output log for running job - %J for job number
+#SBATCH --job-name boolq_loss_perm_seed52		### name of the job
+#SBATCH --output boolq_loss_perm_seed52.out		### output log for running job - %J for job number
 #SBATCH --gpus=1				### number of GPUs, allocating more than 1 requires IT team's permission. Example to request 3090 gpu: #SBATCH --gpus=rtx_3090:1
 #SBATCH --constraint rtx_4090
 
 # Note: the following 4 lines are commented out
 #SBATCH --mail-user=user@post.bgu.ac.il	### user's email for sending job status messages
 #SBATCH --mail-type=ALL			### conditions for sending the email. ALL,BEGIN,END,FAIL, REQUEU, NONE
-##SBATCH --mem=48G				### ammount of RAM memory, allocating more than 60G requires IT team's permission
+##SBATCH --mem=48G				### amount of RAM memory, allocating more than 60G requires IT team's permission
 
 ################  Following lines will be executed by a compute node    #######################
 
